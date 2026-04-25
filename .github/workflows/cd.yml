@@ -1,0 +1,97 @@
+name: CD
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Extension
+        run: npm run build --workspace=extension
+        working-directory: extension
+
+      - name: Package Extension zip
+        run: |
+          cd extension/dist
+          zip -r ext.zip . -x "*.map"
+        working-directory: extension
+
+      - name: Upload Extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: extension/dist/ext.zip
+
+      - name: Build Relay Docker image
+        run: |
+          cd relay-server
+          docker build -t openclaw-relay:${{ github.ref_name }} .
+        working-directory: relay-server
+
+      - name: Upload Docker image as artifact
+        run: |
+          docker save openclaw-relay:${{ github.ref_name }} > relay-image.tar
+        working-directory: relay-server
+
+      - name: Upload Docker artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-image
+          path: relay-server/relay-image.tar
+
+  deploy-relay:
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Docker artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: relay-image
+          path: relay-server
+
+      - name: Load Docker image
+        run: docker load --input relay-server/relay-image.tar
+
+      - name: Deploy to Alibaba Cloud
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SERVER_IP: ${{ vars.DEPLOY_SERVER_IP }}
+          SERVER_PORT: ${{ vars.DEPLOY_SERVER_PORT }}
+          SERVER_USER: ${{ vars.DEPLOY_SERVER_USER }}
+        run: |
+          echo "$DEPLOY_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          # Copy image to server
+          scp -o StrictHostKeyChecking=no -i /tmp/deploy_key -P $SERVER_PORT \
+            relay-server/relay-image.tar \
+            $SERVER_USER@$SERVER_IP:/tmp/
+
+          # Load and restart on server
+          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key -p $SERVER_PORT \
+            $SERVER_USER@$SERVER_IP << 'EOF'
+            docker load --input /tmp/relay-image.tar
+            docker stop openclaw-relay || true
+            docker rm openclaw-relay || true
+            docker run -d \
+              --name openclaw-relay \
+              --restart unless-stopped \
+              -p 18791:18791 \
+              -e TLS_ENABLED=false \
+              -e GATEWAY_TOKEN=${{ secrets.GATEWAY_TOKEN }} \
+              openclaw-relay:${{ github.ref_name }}
+          EOF
+
+          echo "Deployment completed for tag ${{ github.ref_name }}"
