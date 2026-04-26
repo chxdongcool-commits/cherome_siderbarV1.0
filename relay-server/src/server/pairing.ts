@@ -34,10 +34,10 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Raw base64 of 32-byte key (Gateway expects this format)
+  // Raw base64 of 32-byte key (Gateway expects this format for device.identity.publicKey)
   const publicKeyBase64 = rawKey.toString('base64');
 
-  // Export private key as PEM for signing
+  // PEM for signing (Ed25519 expects PKCS8)
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
@@ -45,6 +45,20 @@ export function generateDeviceKey(): DeviceKey {
     publicKey: publicKeyBase64,
     privateKey: privateKeyPem,
   };
+}
+
+/**
+ * Get PEM from private key for signing
+ */
+export function privateKeyToPem(privateKey: any): string {
+  return (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
+}
+
+/**
+ * Get SPKI PEM from public key (for signature verification)
+ */
+export function publicKeyToPem(publicKey: any): string {
+  return (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
 }
 
 export interface PairingResult {
@@ -125,7 +139,6 @@ export async function performPairingWebSocket(
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let resolved = false;
-    let requestId: string | null = null;
     let pairingToken: string | null = null;
 
     const cleanup = () => {
@@ -206,8 +219,23 @@ export async function performPairingWebSocket(
               const errorCode = frame.error?.code;
               const errorDetails = frame.error?.details;
 
-              logger.error({ errorCode, errorDetails }, 'Connect rejected - pairing required but not implemented');
-              fail(new Error(`Connect rejected: ${frame.error?.message}`));
+              if (errorCode === 'NOT_PAIRED' && errorDetails?.code === 'DEVICE_IDENTITY_REQUIRED') {
+                // Device not paired yet - initiate pairing request
+                logger.info('Device not paired, initiating node.pair.request...');
+
+                ws!.send(JSON.stringify({
+                  type: 'req',
+                  id: 'pair-request',
+                  method: 'node.pair.request',
+                  params: {
+                    role: 'operator',
+                    scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+                  },
+                }));
+              } else {
+                logger.error({ errorCode, errorDetails }, 'Connect rejected');
+                fail(new Error(`Connect rejected: ${frame.error?.message}`));
+              }
             } else {
               // 连接成功 (已配对)
               logger.info({ connId: frame.payload?.server?.connId }, 'Already paired, connection successful');
@@ -225,7 +253,7 @@ export async function performPairingWebSocket(
             }
           }
           // 3. node.pair.request 响应
-          else if (frame.type === 'res' && frame.id === requestId) {
+          else if (frame.type === 'res' && frame.id === 'pair-request') {
             if (frame.ok) {
               const payload = frame.payload as { requestId?: string; status?: string };
               pairingToken = payload.requestId || null;
