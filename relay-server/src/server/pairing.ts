@@ -206,6 +206,9 @@ export async function performPairingWebSocket(
                 },
                 role: 'operator',
                 scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+                auth: {
+                  token: 'b5cd1af01f5a5330ddf36554a080a5ee887799f75648a738',
+                },
                 device: {
                   id: deviceKey.deviceId,
                   publicKey: deviceKey.publicKey,
