@@ -34,15 +34,13 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Raw base64 of 32-byte key (Gateway expects this format for device.identity.publicKey)
-  const publicKeyBase64 = rawKey.toString('base64');
-
-  // PEM for signing (Ed25519 expects PKCS8)
+  // Store SPKI PEM format - this is what Gateway stores
+  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
     deviceId,
-    publicKey: publicKeyBase64,
+    publicKey: publicKeyPem,
     privateKey: privateKeyPem,
   };
 }
@@ -184,12 +182,14 @@ export async function performPairingWebSocket(
             const challengePayload = frame.payload as { nonce: string; ts: number };
             logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            // Sign: nonceHex + ts (both as strings, no encoding)
+            // Sign: nonceBytes (raw binary) + ts as binary string
             const nonceHex = challengePayload.nonce.replace(/-/g, '');
-            const signDataStr = nonceHex + challengePayload.ts;
-            const signature = signData(signDataStr, deviceKey.privateKey);
+            const nonceBytes = Buffer.from(nonceHex, 'hex');
+            const tsBytes = Buffer.from(String(challengePayload.ts));
+            const signDataBuf = Buffer.concat([nonceBytes, tsBytes]);
+            const signature = signData(signDataBuf.toString('binary'), deviceKey.privateKey);
 
-            logger.info({ nonceHexLen: nonceHex.length, ts: challengePayload.ts }, 'Signature payload');
+            logger.info({ nonceLen: nonceBytes.length, tsLen: tsBytes.length }, 'Signature payload');
 
             ws!.send(JSON.stringify({
               type: 'req',
