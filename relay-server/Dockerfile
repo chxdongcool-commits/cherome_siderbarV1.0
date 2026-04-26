@@ -12,6 +12,9 @@ COPY relay-server/package*.json ./relay-server/
 COPY relay-server/tsconfig.json ./relay-server/
 COPY relay-server/src ./relay-server/src
 
+# Use Chinese npm mirror for better connectivity
+RUN npm config set registry https://registry.npmmirror.com
+
 # Install all workspace dependencies
 RUN npm install
 
@@ -29,7 +32,7 @@ COPY --from=builder /app/relay-server/dist ./dist
 COPY --from=builder /app/relay-server/package*.json ./
 
 # Install only production dependencies
-RUN npm ci --only=production
+RUN npm install --only=production
 
 EXPOSE 18791
 
