@@ -251,7 +251,7 @@ export class RelayWebSocketServer {
   private startHeartbeat() {
     // Extension heartbeat (ping/pong)
     this.extHeartbeatTimer = setInterval(() => {
-      for (const [extId, conn] of this.extConnections) {
+      for (const [, conn] of this.extConnections) {
         if (conn.ws.readyState === WebSocket.OPEN) {
           conn.ws.ping();
         }

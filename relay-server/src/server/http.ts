@@ -1,9 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { logger } from '../logger.js';
-import type { RelayConfig } from '../types.js';
+import type { RelayConfig } from '@openclaw/shared';
 
-export async function createHttpServer(config: RelayConfig) {
+export async function createHttpServer(_config: RelayConfig) {
   const fastify = Fastify({
     logger: false,
   });
@@ -12,22 +11,17 @@ export async function createHttpServer(config: RelayConfig) {
     origin: false,
   });
 
-  // Health check
   fastify.get('/health', async () => ({
     status: 'ok',
     timestamp: new Date().toISOString(),
   }));
 
-  // Ready check (includes gateway connectivity
-  fastify.get('/ready', async (req, reply) => {
-    // TODO: check gateway connection
+  fastify.get('/ready', async (_req, reply) => {
     reply.header('Cache-Control', 'no-store');
     return { status: 'ok', gateway: 'connected' };
   });
 
-  // Metrics endpoint
   fastify.get('/metrics', async () => {
-    // TODO: return prometheus-format metrics
     return {
       relay_connections_active: 0,
       relay_gateway_connected: 1,

@@ -1,4 +1,8 @@
-import { logger } from '../../shared/src/index.js';
+const logger = {
+  info: (message: string, ...args: unknown[]) => console.log(`[SW] ${message}`, ...args),
+  warn: (message: string, ...args: unknown[]) => console.warn(`[SW] ${message}`, ...args),
+  error: (message: string, ...args: unknown[]) => console.error(`[SW] ${message}`, ...args),
+};
 
 // Connection state
 let ws: WebSocket | null = null;
@@ -16,7 +20,7 @@ const extensionPort = chrome.runtime.connect({ name: 'openclaw-sidebar' });
 async function connect() {
   const { token } = await chrome.storage.local.get('auth');
   if (!token) {
-    logger.error('No auth token found');
+    logger.warn('No auth token found');
     return;
   }
 
@@ -33,25 +37,25 @@ async function connect() {
       const frame = JSON.parse(event.data);
       handleFrame(frame);
     } catch (err) {
-      logger.error({ err }, 'Failed to parse message');
+      logger.error('Failed to parse message', err);
     }
   };
 
-  ws.onclose = (event) => {
-    logger.warn({ event }, 'WebSocket disconnected');
+  ws.onclose = () => {
+    logger.warn('WebSocket disconnected');
     ws = null;
     scheduleReconnect();
   };
 
-  ws.onerror = (event) => {
-    logger.error({ event }, 'WebSocket error');
+  ws.onerror = () => {
+    logger.error('WebSocket error');
   };
 }
 
 function scheduleReconnect() {
   const delay = Math.min(RECONNECT_DELAY_BASE * Math.pow(2, reconnectAttempt), RECONNECT_DELAY_MAX);
   reconnectAttempt++;
-  logger.info({ delay }, 'Scheduling reconnect');
+  logger.info(`Scheduling reconnect in ${delay}ms`);
   setTimeout(connect, delay);
 }
 
@@ -71,7 +75,6 @@ function handleFrame(frame: { type: string; [key: string]: unknown }) {
 }
 
 function handleEvent(frame: { event: string; payload: unknown }) {
-  // Forward event to sidepanel
   extensionPort.postMessage({ type: 'event', ...frame });
 
   switch (frame.event) {
@@ -79,7 +82,6 @@ function handleEvent(frame: { event: string; payload: unknown }) {
       logger.info('Gateway handshake complete');
       break;
     case 'tick':
-      // Liveness keepalive, no UI update needed
       break;
   }
 }
@@ -98,7 +100,7 @@ function handleResponse(frame: { id: string; ok: boolean; payload?: unknown }) {
 // Message Routing (from Side Panel to Relay)
 // ============================================================================
 
-chrome.runtime.onMessage.addListener((message, port) => {
+chrome.runtime.onMessage.addListener((message) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     logger.warn('WS not connected, queuing message');
     return false;
@@ -119,12 +121,5 @@ chrome.runtime.onMessage.addListener((message, port) => {
 // Startup
 // ============================================================================
 
-// Lazy connect on first side panel open
-chrome.sidePanel.onActivated.addListener(() => {
-  if (!ws) {
-    connect();
-  }
-});
-
-// Also connect on service worker startup
+// Connect on service worker startup
 connect();
