@@ -61,23 +61,33 @@ Flow:
 - 次优先: `DEVICE_TOKEN` 环境变量
 - 最后: config 文件中的 token
 
-### 部署后操作
+---
 
-1. **首次部署需要配对**:
-   ```bash
-   # 启动 relay
-   docker run -d --network=host openclaw-relay
+## 2026-04-26 - Pairing 问题排查
 
-   # 在 gateway 服务器上查看待审批请求
-   openclaw nodes list
+### 发现的问题
 
-   # 审批配对请求
-   openclaw nodes approve <requestId>
-   ```
+经过多次尝试，发现以下问题：
 
-2. **后续部署自动使用已保存 token**:
-   - 设备密钥和 token 保存在 `~/.openclaw-relay/`
-   - 重启 relay 时会自动使用已保存的 token
+1. **Gateway 要求设备身份**: 即使设置了 `dangerouslyDisableDeviceAuth: true`，Gateway 的 WebSocket 协议仍然要求设备身份验证。该设置只影响 Control UI。
+
+2. **设备密钥格式**: Gateway 存储的设备公钥只有 40 字符（base64），而标准 Ed25519 公钥是 44 字符（base64）。这表明 Gateway 使用的是密钥指纹或哈希，而非实际的公钥。
+
+3. **Device Identity Mismatch**: 生成新的 Ed25519 密钥对会导致 `DEVICE_AUTH_DEVICE_ID_MISMATCH` 错误，表明 Gateway 已经注册了特定设备的身份。
+
+4. **node.pair.request 问题**: 调用 `node.pair.request` 方法后，Gateway 会立即关闭 WebSocket 连接，导致无法完成配对流程。
+
+### 当前状态
+
+- Docker 镜像: ✅ 构建成功
+- Gateway 连接: ❌ 失败 (`DEVICE_AUTH_DEVICE_ID_MISMATCH`)
+
+### 待解决
+
+需要以下之一:
+1. 提供预注册的设备身份给 relay 使用
+2. 在 Gateway 服务器上手动添加 relay 的设备到 `~/.openclaw/devices/paired.json`
+3. 确认 Gateway 版本是否支持 relay 类型的客户端连接
 
 ### 相关文档
 - [OpenClaw Gateway Pairing](https://docs.openclaw.ai/gateway/pairing.md)
