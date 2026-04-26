@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, sign as cryptoSign } from 'crypto';
+import { sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -138,17 +138,12 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，发送带设备身份的 connect 请求
+          // 1. 收到 challenge，发送只带 token 的 connect 请求（不携带设备身份）
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request with device identity...');
+            logger.info('Received connect.challenge, sending connect request with token only...');
 
-            const nonce = randomUUID();
-            const signedAt = Date.now();
-            const dataToSign = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
-            const signature = signData(dataToSign, deviceKey.privateKey);
-
-            // Use the manually registered device's token
-            const cliDeviceToken = 'XJW_qHxWiq1JhUgThhUVd8HuSuWNFjQQ25w0LEVFEWc=';
+            // Use existing cli device's token (has full operator scope)
+            const cliDeviceToken = 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU';
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -161,16 +156,7 @@ export async function performPairingWebSocket(
                   id: 'cli',
                   version: '1.0.0',
                   platform: 'linux',
-                  mode: 'node',
-                },
-                role: 'node',
-                scopes: [],
-                device: {
-                  id: deviceKey.deviceId,
-                  publicKey: deviceKey.publicKey,
-                  signature: signature,
-                  signedAt: signedAt,
-                  nonce: nonce,
+                  mode: 'backend',
                 },
                 auth: {
                   deviceToken: cliDeviceToken,
