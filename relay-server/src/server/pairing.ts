@@ -184,13 +184,11 @@ export async function performPairingWebSocket(
             const challengePayload = frame.payload as { nonce: string; ts: number };
             logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            // Sign: deviceId:nonceHex:signedAt (colon separator, use local time for signedAt)
-            const nonceHex = challengePayload.nonce.replace(/-/g, '');
-            const signedAt = Date.now();
-            const signDataStr = `${deviceKey.deviceId}:${nonceHex}:${signedAt}`;
+            // Try just the nonce (UUID string) as signature payload
+            const signDataStr = challengePayload.nonce;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
-            logger.info({ signDataStr, deviceId: deviceKey.deviceId, publicKey: deviceKey.publicKey.substring(0, 20) }, 'Signature payload');
+            logger.info({ signDataStr }, 'Signature payload');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -211,7 +209,7 @@ export async function performPairingWebSocket(
                   id: deviceKey.deviceId,
                   publicKey: deviceKey.publicKey,
                   signature: signature,
-                  signedAt: signedAt,
+                  signedAt: challengePayload.ts,
                   nonce: challengePayload.nonce,
                 },
               },
