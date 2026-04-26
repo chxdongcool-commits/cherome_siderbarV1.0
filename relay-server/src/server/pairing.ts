@@ -34,13 +34,13 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Store SPKI PEM format - this is what Gateway stores
-  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
+  // Use raw 32-byte base64 publicKey (what Gateway stores in paired.json)
+  const publicKeyBase64 = rawKey.toString('base64');
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
     deviceId,
-    publicKey: publicKeyPem,
+    publicKey: publicKeyBase64,
     privateKey: privateKeyPem,
   };
 }
@@ -182,8 +182,8 @@ export async function performPairingWebSocket(
             const challengePayload = frame.payload as { nonce: string; ts: number };
             logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            // Sign: just the nonce string (UUID format with dashes)
-            const signDataStr = challengePayload.nonce;
+            // Sign: deviceId:nonce (colon separator)
+            const signDataStr = deviceKey.deviceId + ':' + challengePayload.nonce;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
             logger.info({ signDataStr, publicKey: deviceKey.publicKey, deviceId: deviceKey.deviceId }, 'Signature payload');
