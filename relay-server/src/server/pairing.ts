@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { sign as cryptoSign, generateKeyPairSync, createHash, randomUUID } from 'crypto';
+import { sign as cryptoSign, generateKeyPairSync, createHash } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -158,11 +158,12 @@ export async function performPairingWebSocket(
 
           // 1. 收到 challenge，发送带设备身份的 connect 请求发起配对
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request with device identity...');
+            const challengePayload = frame.payload as { nonce: string; ts: number };
+            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            const nonce = randomUUID();
+            // Sign the server-provided nonce (not a self-generated one)
             const signedAt = Date.now();
-            const signDataStr = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
+            const signDataStr = `${deviceKey.deviceId}:${challengePayload.nonce}:${challengePayload.ts}:${signedAt}`;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
             ws!.send(JSON.stringify({
@@ -185,7 +186,7 @@ export async function performPairingWebSocket(
                   publicKey: deviceKey.publicKey,
                   signature: signature,
                   signedAt: signedAt,
-                  nonce: nonce,
+                  nonce: challengePayload.nonce,
                 },
               },
             }));
