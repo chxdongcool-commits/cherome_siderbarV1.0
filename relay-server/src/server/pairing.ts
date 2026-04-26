@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { sign as cryptoSign } from 'crypto';
+import { sign as cryptoSign, generateKeyPairSync } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -23,6 +23,28 @@ import { logger } from '../logger.js';
 
 const PAIRING_TIMEOUT_MS = 300000; // 5 minutes
 const DEVICE_KEY_PATH = join(homedir(), '.openclaw-relay', 'device-key.json');
+
+/**
+ * Generate a new Ed25519 key pair and compute deviceId (SHA256 of raw 32-byte public key)
+ */
+export function generateDeviceKey(): DeviceKey {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+
+  // DeviceId = SHA256 of raw 32-byte public key
+  const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
+  const crypto = require('crypto');
+  const deviceId = crypto.createHash('sha256').update(rawKey).digest('hex');
+
+  // Export as PEM
+  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
+  const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
+
+  return {
+    deviceId,
+    publicKey: publicKeyPem,
+    privateKey: privateKeyPem,
+  };
+}
 
 export interface PairingResult {
   deviceToken: string;
@@ -51,26 +73,22 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     logger.warn({ err }, 'Failed to load device key from file');
   }
 
-  // For testing: use the existing cli device credentials from paired.json
-  // deviceId: 2dda14bf05401923ff2a52607616ed8be2704a6b7c5b7c85daa8b1ce80ce72a4
-  // This device has token with full operator scope
-  const existingDevice: DeviceKey = {
-    deviceId: '2dda14bf05401923ff2a52607616ed8be2704a6b7c5b7c85daa8b1ce80ce72a4',
-    publicKey: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEuLRbUwgo3QAkMpTWjFSVF2UW3ne8G2Tm2jyWnxgjhc=\n-----END PUBLIC KEY-----\n',
-    privateKey: '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIDISXf8Qj9a2zQa9gQ7M0m8bPJK7s5V6kL4xF8dRqJZM\n-----END PRIVATE KEY-----\n',
-  };
+  // Generate new key pair
+  logger.info('Generating new Ed25519 device key...');
+  const newDevice = generateDeviceKey();
+  logger.info({ deviceId: newDevice.deviceId }, 'Generated new device key');
 
   // Save for future use
   try {
     const dir = join(homedir(), '.openclaw-relay');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(existingDevice, null, 2));
-    logger.info({ deviceId: existingDevice.deviceId }, 'Saved existing device key');
+    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(newDevice, null, 2));
+    logger.info({ deviceId: newDevice.deviceId }, 'Saved new device key');
   } catch (err) {
     logger.error({ err }, 'Failed to save device key');
   }
 
-  return existingDevice;
+  return newDevice;
 }
 
 /**
