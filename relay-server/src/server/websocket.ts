@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.js';
 import { MessageRelay } from './relay.js';
+import { loadOrCreateDeviceKey, signData } from './pairing.js';
 import type {
   RelayConfig,
   GatewayFrame,
@@ -89,17 +90,34 @@ export class RelayWebSocketServer {
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
             logger.info('Received connect.challenge, sending connect request...');
 
+            // Load device key for this relay
+            const deviceKey = loadOrCreateDeviceKey();
+            const nonce = randomUUID();
+            const signedAt = Date.now();
+            const signDataStr = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
+            const signature = signData(signDataStr, deviceKey.privateKey);
+
             const connectParams: ConnectParams = {
               minProtocol: 3,
               maxProtocol: 3,
               client: {
-                id: 'openclaw-probe' as ClientId,
+                id: 'cli' as ClientId,
                 version: '1.0.0',
                 platform: 'linux',
-                mode: 'probe' as ClientMode,
+                mode: 'node' as ClientMode,
+              },
+              role: 'node',
+              scopes: [],
+              device: {
+                id: deviceKey.deviceId,
+                publicKey: deviceKey.publicKey,
+                signature: signature,
+                signedAt: signedAt,
+                nonce: nonce,
               },
             };
 
+            // Include device token if we have one (after pairing)
             if (this.config.pairing.deviceToken) {
               connectParams.auth = {
                 deviceToken: this.config.pairing.deviceToken,

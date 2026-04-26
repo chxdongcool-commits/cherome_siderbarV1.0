@@ -2,25 +2,58 @@ import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { createHttpServer } from './server/http.js';
 import { RelayWebSocketServer } from './server/websocket.js';
-import { performPairing } from './server/pairing.js';
+import { performPairingWebSocket, loadSavedToken } from './server/pairing.js';
 
 async function main() {
   const config = loadConfig();
 
-  // Check if device token exists (from env var or config file)
-  if (!config.pairing.deviceToken) {
-    logger.info('No device token found, starting pairing flow...');
+  // Check if device token exists (from env var, config file, or saved token)
+  const savedToken = loadSavedToken();
+  const envToken = process.env.DEVICE_TOKEN;
+  const tokenToUse = envToken || savedToken || config.pairing.deviceToken;
+
+  if (!tokenToUse) {
+    logger.info('No device token found, starting WebSocket pairing flow...');
+    console.log('\n');
+    console.log('╔════════════════════════════════════════════════════════════╗');
+    console.log('║       OPENCLAW RELAY - GATEWAY PAIRING REQUIRED           ║');
+    console.log('╠════════════════════════════════════════════════════════════╣');
+    console.log('║  The relay needs to be paired with the Gateway.           ║');
+    console.log('║                                                        ║');
+    console.log('║  After the relay starts, you must approve it:           ║');
+    console.log('║    1. On the gateway server, run:                        ║');
+    console.log('║       openclaw nodes list                                ║');
+    console.log('║    2. Find the pending pairing request                  ║');
+    console.log('║    3. Run: openclaw nodes approve <requestId>            ║');
+    console.log('║                                                        ║');
+    console.log('║  The relay will auto-retry until pairing is approved.    ║');
+    console.log('╚════════════════════════════════════════════════════════════╝');
+    console.log('\n');
+
     try {
-      const result = await performPairing(config);
+      const result = await performPairingWebSocket(
+        config.gateway.host,
+        config.gateway.port,
+        (status) => {
+          logger.info({ status }, 'Pairing status update');
+        }
+      );
+      logger.info({ deviceId: result.deviceId }, 'Pairing successful!');
       config.pairing.deviceToken = result.deviceToken;
-      logger.info('Device token obtained. Save this token and restart with DEVICE_TOKEN env var for future runs.');
-      logger.info(`DEVICE_TOKEN=${result.deviceToken}`);
     } catch (err) {
       logger.error({ err }, 'Pairing failed');
       process.exit(1);
     }
   } else {
-    logger.info('Using existing device token from config/env');
+    if (envToken) {
+      logger.info('Using device token from DEVICE_TOKEN env var');
+    } else if (savedToken) {
+      logger.info('Using saved device token');
+      config.pairing.deviceToken = savedToken;
+    } else {
+      logger.info('Using device token from config');
+      config.pairing.deviceToken = tokenToUse;
+    }
   }
 
   // HTTP server (health/metrics)
