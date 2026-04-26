@@ -104,23 +104,23 @@ export class RelayWebSocketServer {
                 id: 'cli' as ClientId,
                 version: '1.0.0',
                 platform: 'linux',
-                mode: 'node' as ClientMode,
+                mode: 'cli' as ClientMode,
               },
-              role: 'node',
-              scopes: [],
-              device: {
+              auth: {
+                deviceToken: this.config.pairing.deviceToken,
+              },
+            };
+
+            // Only include device identity if pairing is complete
+            if (false) {
+              connectParams.role = 'operator';
+              connectParams.scopes = ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'];
+              connectParams.device = {
                 id: deviceKey.deviceId,
                 publicKey: deviceKey.publicKey,
                 signature: signature,
                 signedAt: signedAt,
                 nonce: nonce,
-              },
-            };
-
-            // Include device token if we have one (after pairing)
-            if (this.config.pairing.deviceToken) {
-              connectParams.auth = {
-                deviceToken: this.config.pairing.deviceToken,
               };
             }
 
