@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { sign as cryptoSign, generateKeyPairSync, createHash } from 'crypto';
+import { sign as cryptoSign, generateKeyPairSync, createHash, randomUUID } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -156,12 +156,14 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，发送只带 token 的 connect 请求（不携带设备身份）
+          // 1. 收到 challenge，发送带设备身份的 connect 请求发起配对
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request with token only...');
+            logger.info('Received connect.challenge, sending connect request with device identity...');
 
-            // Use existing cli device's token (has full operator scope)
-            const cliDeviceToken = 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU';
+            const nonce = randomUUID();
+            const signedAt = Date.now();
+            const signDataStr = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
+            const signature = signData(signDataStr, deviceKey.privateKey);
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -174,10 +176,16 @@ export async function performPairingWebSocket(
                   id: 'cli',
                   version: '1.0.0',
                   platform: 'linux',
-                  mode: 'backend',
+                  mode: 'cli',
                 },
-                auth: {
-                  deviceToken: cliDeviceToken,
+                role: 'operator',
+                scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+                device: {
+                  id: deviceKey.deviceId,
+                  publicKey: deviceKey.publicKey,
+                  signature: signature,
+                  signedAt: signedAt,
+                  nonce: nonce,
                 },
               },
             }));
