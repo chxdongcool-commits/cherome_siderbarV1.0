@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { generateKeyPairSync, sign as cryptoSign } from 'crypto';
+import { randomUUID, createHash, generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -53,8 +53,9 @@ export function loadOrCreateDeviceKey(): DeviceKey {
   // 生成新密钥对 (使用 Ed25519)
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 
-  // Ed25519 公钥是 32 字节，转换为 base64 作为 deviceId
-  const deviceId = publicKey.export({ type: 'spki', format: 'der' }).slice(-32).toString('base64');
+  // 使用公钥的 SHA256 哈希作为 deviceId (与网关格式一致)
+  const publicKeyDer = publicKey.export({ type: 'spki', format: 'der' });
+  const deviceId = createHash('sha256').update(publicKeyDer).digest('hex');
   const key: DeviceKey = {
     deviceId,
     publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
@@ -140,9 +141,14 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，尝试 backend 模式连接
+          // 1. 收到 challenge，发送带设备身份的 connect 请求
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending backend mode connect request...');
+            logger.info('Received connect.challenge, sending connect request with device identity...');
+
+            const nonce = randomUUID();
+            const signedAt = Date.now();
+            const dataToSign = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
+            const signature = signData(dataToSign, deviceKey.privateKey);
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -152,10 +158,19 @@ export async function performPairingWebSocket(
                 minProtocol: 3,
                 maxProtocol: 3,
                 client: {
-                  id: 'gateway-client',
+                  id: 'cli',
                   version: '1.0.0',
                   platform: 'linux',
-                  mode: 'backend',
+                  mode: 'node',
+                },
+                role: 'node',
+                scopes: [],
+                device: {
+                  id: deviceKey.deviceId,
+                  publicKey: deviceKey.publicKey,
+                  signature: signature,
+                  signedAt: signedAt,
+                  nonce: nonce,
                 },
               },
             }));
