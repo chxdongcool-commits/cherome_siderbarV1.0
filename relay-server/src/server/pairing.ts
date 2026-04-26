@@ -51,25 +51,26 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     logger.warn({ err }, 'Failed to load device key from file');
   }
 
-  // For testing: use the manually registered device credentials on server
-  // Device was manually added to Gateway's paired.json
-  const manualKey: DeviceKey = {
-    deviceId: 'badc07a8b329fc02cf28ca3f8784679c0a801c5b59196c8b884268259354f849',
-    publicKey: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAsawKge0J1qWFwmW9+X3LA8kaLfLihqB944beMhKfEe8=\n-----END PUBLIC KEY-----\n',
-    privateKey: '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFX63RU5y6yf9qURBCT7/bkEu+j1tdG9OV362MwdHvHE\n-----END PRIVATE KEY-----\n',
+  // For testing: use the existing cli device credentials from paired.json
+  // deviceId: 2dda14bf05401923ff2a52607616ed8be2704a6b7c5b7c85daa8b1ce80ce72a4
+  // This device has token with full operator scope
+  const existingDevice: DeviceKey = {
+    deviceId: '2dda14bf05401923ff2a52607616ed8be2704a6b7c5b7c85daa8b1ce80ce72a4',
+    publicKey: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEuLRbUwgo3QAkMpTWjFSVF2UW3ne8G2Tm2jyWnxgjhc=\n-----END PUBLIC KEY-----\n',
+    privateKey: '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIDISXf8Qj9a2zQa9gQ7M0m8bPJK7s5V6kL4xF8dRqJZM\n-----END PRIVATE KEY-----\n',
   };
 
   // Save for future use
   try {
     const dir = join(homedir(), '.openclaw-relay');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(manualKey, null, 2));
-    logger.info({ deviceId: manualKey.deviceId }, 'Saved manual device key');
+    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(existingDevice, null, 2));
+    logger.info({ deviceId: existingDevice.deviceId }, 'Saved existing device key');
   } catch (err) {
     logger.error({ err }, 'Failed to save device key');
   }
 
-  return manualKey;
+  return existingDevice;
 }
 
 /**
