@@ -27,13 +27,14 @@ body {
   height: 100vh;
 }
 
+/* Header */
 .header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 12px 16px;
   background: #1a1a1a;
   color: white;
-  gap: 8px;
   -webkit-app-region: drag;
 }
 
@@ -42,6 +43,55 @@ body {
   font-size: 15px;
 }
 
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-connected {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+.status-connected .status-dot {
+  background: #4caf50;
+}
+
+.status-connecting,
+.status-reconnecting {
+  background: rgba(255, 152, 0, 0.2);
+  color: #ff9800;
+}
+.status-connecting .status-dot,
+.status-reconnecting .status-dot {
+  background: #ff9800;
+  animation: pulse 1s infinite;
+}
+
+.status-disconnected {
+  background: rgba(244, 67, 54, 0.2);
+  color: #f44336;
+}
+.status-disconnected .status-dot {
+  background: #f44336;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Messages */
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -64,6 +114,107 @@ body {
   margin-top: 8px;
 }
 
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+
+.message-user {
+  align-self: flex-end;
+}
+
+.message-assistant {
+  align-self: flex-start;
+}
+
+.message-content {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.message-user .message-content {
+  background: #0066cc;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.message-assistant .message-content {
+  background: white;
+  color: #333;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.message-content p {
+  margin: 0;
+}
+
+.message-content p + p {
+  margin-top: 8px;
+}
+
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #0066cc;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: text-bottom;
+}
+
+.message-user .cursor {
+  background: white;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.typing-indicator {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #999;
+  animation: typing 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Input Area */
 .input-area {
   display: flex;
   gap: 8px;

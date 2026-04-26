@@ -2,16 +2,17 @@
   "manifest_version": 3,
   "name": "OpenClaw Sidebar",
   "version": "1.0.0",
-  "description": "Chat with OpenClaw AI from your browser side panel",
+  "description": "Chat with OpenClaw AI directly from your browser side panel",
   "permissions": [
     "sidePanel",
     "storage"
   ],
   "host_permissions": [
-    "wss://47.89.181.91:18790/*"
+    "wss://47.89.181.91:18790/*",
+    "http://47.89.181.91:18791/*"
   ],
   "background": {
-    "service_worker": "src/background/index.js",
+    "service_worker": "background/index.js",
     "type": "module"
   },
   "side_panel": {
@@ -29,11 +30,11 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' wss://47.89.181.91:18790; img-src 'self' https: data:"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' wss://47.89.181.91:18790 ws://47.89.181.91:18791; img-src 'self' https: data: blob:"
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/sidepanel/styles.css"],
+      "resources": ["assets/sidepanel.css"],
       "extension_ids": ["*"]
     }
   ]
