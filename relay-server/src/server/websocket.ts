@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import { logger } from '../logger.js';
+import { MessageRelay } from './relay.js';
 import type {
   RelayConfig,
   GatewayFrame,
@@ -8,7 +9,7 @@ import type {
   ClientId,
   ClientMode,
   HelloOkPayload,
-} from '../types.js';
+} from '@openclaw/shared';
 
 interface ExtConnection {
   id: string;
@@ -16,7 +17,7 @@ interface ExtConnection {
   remoteIp: string;
   connectedAt: number;
   authenticated: boolean;
-  connId?: string;  // from hello-ok
+  connId?: string;
 }
 
 interface GwConnection {
@@ -29,6 +30,7 @@ interface GwConnection {
 export class RelayWebSocketServer {
   private extConnections = new Map<string, ExtConnection>();
   private gwConn: GwConnection = { ws: null, connectedAt: null, authenticated: false };
+  private relay = new MessageRelay();
   private config: RelayConfig;
   private wss: WebSocketServer | null = null;
   private extHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -45,6 +47,7 @@ export class RelayWebSocketServer {
       const extId = randomUUID();
       const remoteIp = req.socket.remoteAddress || 'unknown';
       this.extConnections.set(extId, { id: extId, ws, remoteIp, connectedAt: Date.now(), authenticated: false });
+      this.relay.registerExt(extId);
       logger.info({ extId, remoteIp }, 'Extension connected');
 
       ws.on('message', (data) => this.handleExtMessage(extId, data));
@@ -55,21 +58,12 @@ export class RelayWebSocketServer {
       });
     });
 
-    // Connect to Gateway (with proper handshake)
     await this.connectToGatewayWithHandshake();
-
     this.startHeartbeat();
 
     logger.info({ port: this.config.port }, 'Relay WebSocket server started');
   }
 
-  /**
-   * Complete connect handshake with Gateway:
-   * 1. WS connect
-   * 2. Receive connect.challenge (nonce)
-   * 3. Send connect req with ConnectParams
-   * 4. Receive hello-ok
-   */
   private async connectToGatewayWithHandshake(): Promise<void> {
     const { host, port } = this.config.gateway;
     const url = `ws://${host}:${port}`;
@@ -93,7 +87,6 @@ export class RelayWebSocketServer {
           const frame = JSON.parse(data.toString()) as GatewayFrame;
 
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            // Step 2: Got challenge, send connect request
             logger.info('Received connect.challenge, sending connect request...');
 
             const connectParams: ConnectParams = {
@@ -107,7 +100,6 @@ export class RelayWebSocketServer {
               },
             };
 
-            // Add device token if available (from pairing flow)
             if (this.config.pairing.deviceToken) {
               connectParams.auth = {
                 deviceToken: this.config.pairing.deviceToken,
@@ -131,7 +123,6 @@ export class RelayWebSocketServer {
               return;
             }
 
-            // Step 4: hello-ok received
             const helloOk = frame.payload as HelloOkPayload;
             logger.info({ connId: helloOk.server.connId, methods: helloOk.features.methods.length }, 'Received hello-ok, Gateway handshake complete');
 
@@ -174,7 +165,6 @@ export class RelayWebSocketServer {
         }
       });
 
-      // Timeout
       setTimeout(() => {
         if (!resolved) {
           cleanup();
@@ -190,9 +180,11 @@ export class RelayWebSocketServer {
       const frame = JSON.parse(data.toString()) as GatewayFrame;
       logger.debug({ extId, frame }, 'Extension message');
 
-      // For now, pass through all frames to Gateway
-      // Auth check can be added later
-      this.relayToGateway(frame);
+      const result = this.relay.processExtMessage(extId, frame);
+
+      if (result.toGateway) {
+        this.relayToGateway(result.toGateway);
+      }
     } catch (err) {
       logger.error({ extId, err }, 'Failed to parse Extension message');
     }
@@ -204,11 +196,33 @@ export class RelayWebSocketServer {
       logger.debug({ frame }, 'Gateway message');
 
       if (frame.type === 'event' && frame.event === 'tick') {
-        // tick is very frequent, log at trace level only
         logger.trace({ event: 'tick' }, 'Gateway tick');
+        return;
       }
 
-      this.relayToExtensions(frame);
+      if (frame.type === 'res') {
+        // Route response to the Extension that made the request
+        const extId = this.relay.getRequestingExt(frame.id);
+        if (extId) {
+          this.relay.clearPendingRequest(frame.id);
+          const extConn = this.extConnections.get(extId);
+          if (extConn && extConn.ws.readyState === WebSocket.OPEN) {
+            extConn.ws.send(JSON.stringify(frame));
+          }
+        }
+        return;
+      }
+
+      if (frame.type === 'event') {
+        // Route event to subscribed Extensions
+        const targetExtIds = this.relay.routeGwEvent(frame);
+        for (const targetExtId of targetExtIds) {
+          const extConn = this.extConnections.get(targetExtId);
+          if (extConn && extConn.ws.readyState === WebSocket.OPEN) {
+            extConn.ws.send(JSON.stringify(frame));
+          }
+        }
+      }
     } catch (err) {
       logger.error({ err }, 'Failed to parse Gateway message');
     }
@@ -222,20 +236,9 @@ export class RelayWebSocketServer {
     this.gwConn.ws.send(JSON.stringify(frame));
   }
 
-  private relayToExtensions(frame: GatewayFrame) {
-    for (const [extId, conn] of this.extConnections) {
-      if (conn.ws.readyState === WebSocket.OPEN) {
-        try {
-          conn.ws.send(JSON.stringify(frame));
-        } catch (err) {
-          logger.error({ extId, err }, 'Failed to send to Extension');
-        }
-      }
-    }
-  }
-
   private handleExtClose(extId: string) {
     this.extConnections.delete(extId);
+    this.relay.unregisterExt(extId);
     logger.info({ extId }, 'Extension disconnected');
   }
 
@@ -256,7 +259,6 @@ export class RelayWebSocketServer {
   }
 
   private startHeartbeat() {
-    // Extension heartbeat (ping/pong)
     this.extHeartbeatTimer = setInterval(() => {
       for (const [, conn] of this.extConnections) {
         if (conn.ws.readyState === WebSocket.OPEN) {
@@ -265,7 +267,6 @@ export class RelayWebSocketServer {
       }
     }, this.config.heartbeat.extIntervalMs);
 
-    // Gateway heartbeat
     this.gwHeartbeatTimer = setInterval(() => {
       if (this.gwConn.ws && this.gwConn.ws.readyState === WebSocket.OPEN) {
         this.gwConn.ws.ping();
