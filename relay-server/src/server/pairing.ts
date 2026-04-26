@@ -34,13 +34,15 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Export as PEM
-  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
+  // Raw base64 of 32-byte key (Gateway expects this format)
+  const publicKeyBase64 = rawKey.toString('base64');
+
+  // Export private key as PEM for signing
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
     deviceId,
-    publicKey: publicKeyPem,
+    publicKey: publicKeyBase64,
     privateKey: privateKeyPem,
   };
 }
@@ -52,8 +54,16 @@ export interface PairingResult {
 
 interface DeviceKey {
   deviceId: string;
-  publicKey: string;
+  publicKey: string; // PEM or raw base64
   privateKey: string;
+}
+
+/**
+ * Get raw 32-byte public key as base64 (for Gateway protocol)
+ */
+export function publicKeyToBase64(publicKey: any): string {
+  const rawKey = publicKey.export({ type: 'spki', format: 'der' }).slice(-32);
+  return rawKey.toString('base64');
 }
 
 /**
