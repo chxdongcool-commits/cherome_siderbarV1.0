@@ -191,6 +191,8 @@ export async function performPairingWebSocket(
             const signDataStr = `${deviceKey.deviceId}|${nonceHex}|${signedAt}`;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
+            logger.info({ signDataStr }, 'Signature payload');
+
             ws!.send(JSON.stringify({
               type: 'req',
               id: 'relay-connect',
