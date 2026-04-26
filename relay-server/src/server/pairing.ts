@@ -140,10 +140,10 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，先发送不带设备身份的 connect 请求
-          // 如果设备未配对，gateway 会返回 NOT_PAIRED
+          // 1. 收到 challenge，先尝试最简单的 connect 请求（无 role 无 scopes）
+          // 如果 dangerouslyDisableDeviceAuth 为 true，可能会成功
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request (no device identity yet)...');
+            logger.info('Received connect.challenge, sending minimal connect request...');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -158,8 +158,6 @@ export async function performPairingWebSocket(
                   platform: 'linux',
                   mode: 'node',
                 },
-                role: 'node',
-                scopes: [],
               },
             }));
           }
