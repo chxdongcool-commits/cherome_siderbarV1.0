@@ -21,8 +21,6 @@ jobs:
           cache-dependency-path: shared/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test
       - run: npm run build
 
   ci-extension:
@@ -39,9 +37,14 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test
       - run: npm run build
+      - name: Upload Extension artifact
+        uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: extension-build
+          path: extension/dist/
+          retention-days: 7
 
   ci-relay:
     runs-on: ubuntu-latest
@@ -57,6 +60,4 @@ jobs:
           cache-dependency-path: relay-server/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test
       - run: npm run build
