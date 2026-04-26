@@ -88,6 +88,13 @@ export function loadConfig(): RelayConfig {
 
   const merged = deepMerge(DEFAULT_CONFIG, fileConfig);
 
+  // Environment variable overrides
+  // DEVICE_TOKEN: Pre-obtained device token for Gateway auth
+  const deviceToken = process.env.DEVICE_TOKEN;
+  if (deviceToken) {
+    merged.pairing = { ...merged.pairing, deviceToken };
+  }
+
   return {
     gateway: merged.gateway,
     pairing: merged.pairing,

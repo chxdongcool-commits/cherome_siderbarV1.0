@@ -364,6 +364,7 @@ export interface RelayConfig {
   };
   pairing: {
     apiBase: string;  // e.g. http://127.0.0.1:18789
+    deviceToken?: string;
   };
   heartbeat: {
     extIntervalMs: number;

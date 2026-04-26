@@ -107,6 +107,13 @@ export class RelayWebSocketServer {
               },
             };
 
+            // Add device token if available (from pairing flow)
+            if (this.config.pairing.deviceToken) {
+              connectParams.auth = {
+                deviceToken: this.config.pairing.deviceToken,
+              };
+            }
+
             ws.send(JSON.stringify({
               type: 'req',
               id: 'relay-connect',

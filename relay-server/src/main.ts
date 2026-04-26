@@ -2,9 +2,26 @@ import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { createHttpServer } from './server/http.js';
 import { RelayWebSocketServer } from './server/websocket.js';
+import { performPairing } from './server/pairing.js';
 
 async function main() {
   const config = loadConfig();
+
+  // Check if device token exists (from env var or config file)
+  if (!config.pairing.deviceToken) {
+    logger.info('No device token found, starting pairing flow...');
+    try {
+      const result = await performPairing(config);
+      config.pairing.deviceToken = result.deviceToken;
+      logger.info('Device token obtained. Save this token and restart with DEVICE_TOKEN env var for future runs.');
+      logger.info(`DEVICE_TOKEN=${result.deviceToken}`);
+    } catch (err) {
+      logger.error({ err }, 'Pairing failed');
+      process.exit(1);
+    }
+  } else {
+    logger.info('Using existing device token from config/env');
+  }
 
   // HTTP server (health/metrics)
   const httpServer = await createHttpServer(config);
