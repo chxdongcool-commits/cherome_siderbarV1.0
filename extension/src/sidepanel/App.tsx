@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAppStore } from './store';
 import './styles.css';
 
@@ -17,6 +19,66 @@ export function App() {
   } = useAppStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleGatewayEvent = useCallback((event: string, payload: unknown) => {
+    const p = payload as { sessionId?: string; messageId?: string; delta?: string };
+    const currentMessages = useAppStore.getState().messages;
+
+    switch (event) {
+      case 'session.message.start': {
+        const msgId = p.messageId || crypto.randomUUID();
+        addMessage({
+          id: msgId,
+          role: 'assistant',
+          parts: [{ type: 'text', text: '' }],
+          status: 'streaming',
+          createdAt: Date.now(),
+        });
+        break;
+      }
+
+      case 'session.message.delta': {
+        const lastMsg = [...currentMessages].reverse().find((m) => m.status === 'streaming');
+        if (lastMsg) {
+          appendToMessage(lastMsg.id, p.delta || '');
+        }
+        break;
+      }
+
+      case 'session.message.end': {
+        const lastMsg = [...currentMessages].reverse().find((m) => m.status === 'streaming');
+        if (lastMsg) {
+          updateMessage(lastMsg.id, { status: 'complete' });
+        }
+        setTyping(false);
+        break;
+      }
+
+      case 'typing.start':
+        setTyping(true);
+        break;
+
+      case 'typing.end':
+        setTyping(false);
+        break;
+
+      case 'hello-ok':
+        console.log('Gateway connected:', payload);
+        break;
+
+      case 'error':
+      case 'session.error': {
+        const err = payload as { message?: string; code?: string };
+        console.error('Gateway error:', err);
+        const streaming = useAppStore.getState().messages.find((m) => m.status === 'streaming');
+        if (streaming) {
+          updateMessage(streaming.id, { status: 'error' });
+        }
+        setTyping(false);
+        break;
+      }
+    }
+  }, [addMessage, appendToMessage, updateMessage, setTyping]);
 
   // Connect to service worker and listen for events
   useEffect(() => {
@@ -37,7 +99,6 @@ export function App() {
       setConnectionState('disconnected');
     });
 
-    // Request current state
     chrome.runtime.sendMessage({ type: 'get-connection-state' }, (response) => {
       if (response?.state) {
         setConnectionState(response.state as ConnectionState);
@@ -47,60 +108,12 @@ export function App() {
     return () => {
       port.disconnect();
     };
-  }, [setConnectionState]);
+  }, [setConnectionState, handleGatewayEvent]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  function handleGatewayEvent(event: string, payload: unknown) {
-    const p = payload as { sessionId?: string; messageId?: string; delta?: string };
-
-    switch (event) {
-      case 'session.message.start': {
-        const msgId = p.messageId || crypto.randomUUID();
-        addMessage({
-          id: msgId,
-          role: 'assistant',
-          parts: [{ type: 'text', text: '' }],
-          status: 'streaming',
-          createdAt: Date.now(),
-        });
-        break;
-      }
-
-      case 'session.message.delta': {
-        // Find the last streaming message and append
-        const lastMsg = [...messages].reverse().find((m) => m.status === 'streaming');
-        if (lastMsg) {
-          appendToMessage(lastMsg.id, p.delta || '');
-        }
-        break;
-      }
-
-      case 'session.message.end': {
-        const lastMsg = [...messages].reverse().find((m) => m.status === 'streaming');
-        if (lastMsg) {
-          updateMessage(lastMsg.id, { status: 'complete' });
-        }
-        setTyping(false);
-        break;
-      }
-
-      case 'typing.start':
-        setTyping(true);
-        break;
-
-      case 'typing.end':
-        setTyping(false);
-        break;
-
-      case 'hello-ok':
-        console.log('Gateway connected:', payload);
-        break;
-    }
-  }
 
   async function handleSend(text: string) {
     if (!text.trim() || connectionState !== 'connected') return;
@@ -159,7 +172,15 @@ export function App() {
               <div key={msg.id} className={`message message-${msg.role}`}>
                 <div className="message-content">
                   {msg.parts.map((part, i) => (
-                    <p key={i}>{part.text}</p>
+                    part.type === 'text' ? (
+                      <ReactMarkdown
+                        key={i}
+                        remarkPlugins={[remarkGfm]}
+                        className="markdown-content"
+                      >
+                        {part.text}
+                      </ReactMarkdown>
+                    ) : null
                   ))}
                   {msg.status === 'streaming' && (
                     <span className="cursor" />
