@@ -50,14 +50,18 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     logger.warn({ err }, 'Failed to load device key, creating new one');
   }
 
-  // 生成新密钥对 (简化版 - 实际应使用 Ed25519)
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  // 生成新密钥对 (使用 RSA-SHA256)
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
 
   const deviceId = randomBytes(32).toString('hex');
   const key: DeviceKey = {
     deviceId,
-    publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    publicKey: publicKey,
+    privateKey: privateKey,
   };
 
   // 确保目录存在
@@ -74,10 +78,10 @@ export function loadOrCreateDeviceKey(): DeviceKey {
 }
 
 /**
- * 对数据签名 (简化版 - 实际应使用 Ed25519)
+ * 对数据签名 (使用 RSA-SHA256)
  */
 export function signData(data: string, privateKey: string): string {
-  const sign = createSign('SHA256');
+  const sign = createSign('RSA-SHA256');
   sign.update(data);
   sign.end();
   return sign.sign(privateKey, 'base64');
