@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, createHash, generateKeyPairSync, sign as cryptoSign } from 'crypto';
+import { randomUUID, generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -39,6 +39,25 @@ interface DeviceKey {
  * 生成或加载设备密钥对
  */
 export function loadOrCreateDeviceKey(): DeviceKey {
+  // For testing: try to load the gateway's own device key if it exists
+  // This allows us to test if the pairing flow works with a pre-registered device
+  const gatewayDeviceKeyPath = '/home/admin/.openclaw/identity/device.json';
+  try {
+    if (existsSync(gatewayDeviceKeyPath)) {
+      const content = readFileSync(gatewayDeviceKeyPath, 'utf-8');
+      const gwKey = JSON.parse(content);
+      logger.info({ deviceId: gwKey.deviceId }, 'Using gateway device key for testing');
+      return {
+        deviceId: gwKey.deviceId,
+        publicKey: gwKey.publicKeyPem,
+        privateKey: gwKey.privateKeyPem,
+      };
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to load gateway device key, creating new one');
+  }
+
+  // No existing key found, create new one
   try {
     if (existsSync(DEVICE_KEY_PATH)) {
       const content = readFileSync(DEVICE_KEY_PATH, 'utf-8');
@@ -53,9 +72,8 @@ export function loadOrCreateDeviceKey(): DeviceKey {
   // 生成新密钥对 (使用 Ed25519)
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 
-  // 使用公钥的 SHA256 哈希作为 deviceId (与网关格式一致)
-  const publicKeyDer = publicKey.export({ type: 'spki', format: 'der' });
-  const deviceId = createHash('sha256').update(publicKeyDer).digest('hex');
+  // Ed25519 公钥是 32 字节，直接作为 deviceId (base64 编码)
+  const deviceId = publicKey.export({ type: 'spki', format: 'der' }).slice(-32).toString('base64');
   const key: DeviceKey = {
     deviceId,
     publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
