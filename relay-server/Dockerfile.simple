@@ -1,0 +1,18 @@
+# Production-only Dockerfile for OpenClaw Relay Server
+# Assumes build is done on host and node_modules are available
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy built artifacts
+COPY relay-server/dist ./dist
+COPY relay-server/package*.json ./
+
+# Copy node_modules from host build
+COPY shared/package*.json ./shared/
+COPY shared/dist ./shared/dist
+COPY node_modules ./node_modules
+
+EXPOSE 18791
+
+CMD ["node", "dist/main.js"]
