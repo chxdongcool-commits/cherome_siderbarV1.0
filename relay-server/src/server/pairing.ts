@@ -14,8 +14,8 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { randomUUID, generateKeyPairSync, randomBytes, createSign } from 'crypto';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import WebSocket from 'ws';
@@ -51,7 +51,6 @@ export function loadOrCreateDeviceKey(): DeviceKey {
   }
 
   // 生成新密钥对 (简化版 - 实际应使用 Ed25519)
-  const { generateKeyPairSync, randomBytes } = require('crypto');
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 
   const deviceId = randomBytes(32).toString('hex');
@@ -64,7 +63,7 @@ export function loadOrCreateDeviceKey(): DeviceKey {
   // 确保目录存在
   const dir = join(homedir(), '.openclaw-relay');
   try {
-    require('fs').mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
     writeFileSync(DEVICE_KEY_PATH, JSON.stringify(key, null, 2));
     logger.info({ deviceId }, 'Generated new device key');
   } catch (err) {
@@ -78,7 +77,6 @@ export function loadOrCreateDeviceKey(): DeviceKey {
  * 对数据签名 (简化版 - 实际应使用 Ed25519)
  */
 export function signData(data: string, privateKey: string): string {
-  const { createSign } = require('crypto');
   const sign = createSign('SHA256');
   sign.update(data);
   sign.end();
