@@ -182,14 +182,11 @@ export async function performPairingWebSocket(
             const challengePayload = frame.payload as { nonce: string; ts: number };
             logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            // Sign: nonceBytes (raw binary) + ts as binary string
-            const nonceHex = challengePayload.nonce.replace(/-/g, '');
-            const nonceBytes = Buffer.from(nonceHex, 'hex');
-            const tsBytes = Buffer.from(String(challengePayload.ts));
-            const signDataBuf = Buffer.concat([nonceBytes, tsBytes]);
-            const signature = signData(signDataBuf.toString('binary'), deviceKey.privateKey);
+            // Sign: just the nonce string (UUID format with dashes)
+            const signDataStr = challengePayload.nonce;
+            const signature = signData(signDataStr, deviceKey.privateKey);
 
-            logger.info({ nonceLen: nonceBytes.length, tsLen: tsBytes.length }, 'Signature payload');
+            logger.info({ signDataStr, publicKey: deviceKey.publicKey, deviceId: deviceKey.deviceId }, 'Signature payload');
 
             ws!.send(JSON.stringify({
               type: 'req',
