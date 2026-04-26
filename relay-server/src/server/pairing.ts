@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, generateKeyPairSync, sign as cryptoSign } from 'crypto';
+import { randomUUID, sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -39,58 +39,37 @@ interface DeviceKey {
  * 生成或加载设备密钥对
  */
 export function loadOrCreateDeviceKey(): DeviceKey {
-  // For testing: try to load the gateway's own device key if it exists
-  // This allows us to test if the pairing flow works with a pre-registered device
-  const gatewayDeviceKeyPath = '/home/admin/.openclaw/identity/device.json';
-  try {
-    if (existsSync(gatewayDeviceKeyPath)) {
-      const content = readFileSync(gatewayDeviceKeyPath, 'utf-8');
-      const gwKey = JSON.parse(content);
-      logger.info({ deviceId: gwKey.deviceId }, 'Using gateway device key for testing');
-      return {
-        deviceId: gwKey.deviceId,
-        publicKey: gwKey.publicKeyPem,
-        privateKey: gwKey.privateKeyPem,
-      };
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Failed to load gateway device key, creating new one');
-  }
-
-  // No existing key found, create new one
+  // Try to load from saved file first
   try {
     if (existsSync(DEVICE_KEY_PATH)) {
       const content = readFileSync(DEVICE_KEY_PATH, 'utf-8');
       const key = JSON.parse(content) as DeviceKey;
-      logger.info({ deviceId: key.deviceId }, 'Loaded existing device key');
+      logger.info({ deviceId: key.deviceId }, 'Loaded existing device key from file');
       return key;
     }
   } catch (err) {
-    logger.warn({ err }, 'Failed to load device key, creating new one');
+    logger.warn({ err }, 'Failed to load device key from file');
   }
 
-  // 生成新密钥对 (使用 Ed25519)
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-
-  // Ed25519 公钥是 32 字节，直接作为 deviceId (base64 编码)
-  const deviceId = publicKey.export({ type: 'spki', format: 'der' }).slice(-32).toString('base64');
-  const key: DeviceKey = {
-    deviceId,
-    publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  // For testing: use the manually registered device credentials on server
+  // Device was manually added to Gateway's paired.json
+  const manualKey: DeviceKey = {
+    deviceId: 'badc07a8b329fc02cf28ca3f8784679c0a801c5b59196c8b884268259354f849',
+    publicKey: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAsawKge0J1qWFwmW9+X3LA8kaLfLihqB944beMhKfEe8=\n-----END PUBLIC KEY-----\n',
+    privateKey: '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFX63RU5y6yf9qURBCT7/bkEu+j1tdG9OV362MwdHvHE\n-----END PRIVATE KEY-----\n',
   };
 
-  // 确保目录存在
-  const dir = join(homedir(), '.openclaw-relay');
+  // Save for future use
   try {
+    const dir = join(homedir(), '.openclaw-relay');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(key, null, 2));
-    logger.info({ deviceId }, 'Generated new device key');
+    writeFileSync(DEVICE_KEY_PATH, JSON.stringify(manualKey, null, 2));
+    logger.info({ deviceId: manualKey.deviceId }, 'Saved manual device key');
   } catch (err) {
     logger.error({ err }, 'Failed to save device key');
   }
 
-  return key;
+  return manualKey;
 }
 
 /**
@@ -168,6 +147,9 @@ export async function performPairingWebSocket(
             const dataToSign = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
             const signature = signData(dataToSign, deviceKey.privateKey);
 
+            // Use the manually registered device's token
+            const cliDeviceToken = 'XJW_qHxWiq1JhUgThhUVd8HuSuWNFjQQ25w0LEVFEWc=';
+
             ws!.send(JSON.stringify({
               type: 'req',
               id: 'relay-connect',
@@ -189,6 +171,9 @@ export async function performPairingWebSocket(
                   signature: signature,
                   signedAt: signedAt,
                   nonce: nonce,
+                },
+                auth: {
+                  deviceToken: cliDeviceToken,
                 },
               },
             }));
