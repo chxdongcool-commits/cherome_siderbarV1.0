@@ -34,13 +34,13 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Use raw 32-byte base64 publicKey (what Gateway stores in paired.json)
-  const publicKeyBase64 = rawKey.toString('base64');
+  // Store SPKI PEM format - the Gateway expects this format in connect
+  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
     deviceId,
-    publicKey: publicKeyBase64,
+    publicKey: publicKeyPem,
     privateKey: privateKeyPem,
   };
 }
@@ -177,16 +177,10 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，发送带设备身份的 connect 请求发起配对
+          // 1. 收到 challenge，发送不带设备身份的 connect 请求
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
             const challengePayload = frame.payload as { nonce: string; ts: number };
-            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
-
-            // Sign: deviceId:nonce (colon separator)
-            const signDataStr = deviceKey.deviceId + ':' + challengePayload.nonce;
-            const signature = signData(signDataStr, deviceKey.privateKey);
-
-            logger.info({ signDataStr, publicKey: deviceKey.publicKey, deviceId: deviceKey.deviceId }, 'Signature payload');
+            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request without device identity...');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -203,17 +197,11 @@ export async function performPairingWebSocket(
                 },
                 role: 'operator',
                 scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
-                device: {
-                  id: deviceKey.deviceId,
-                  publicKey: deviceKey.publicKey,
-                  signature: signature,
-                  signedAt: challengePayload.ts,
-                  nonce: challengePayload.nonce,
-                },
+                // Don't include device.identity - let Gateway reject with NOT_PAIRED
               },
             }));
           }
-          // 2. 收到 connect 响应
+          // 2. 收到 connect 响应 (NOT_PAIRED)
           else if (frame.type === 'res' && frame.id === 'relay-connect') {
             if (!frame.ok) {
               const errorCode = frame.error?.code;
