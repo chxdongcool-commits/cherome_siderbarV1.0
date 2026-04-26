@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, generateKeyPairSync, randomBytes, createSign } from 'crypto';
+import { randomUUID, generateKeyPairSync, createSign, createHash } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -57,7 +57,8 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
 
-  const deviceId = randomBytes(32).toString('hex');
+  // 使用公钥的 SHA256 哈希作为稳定设备 ID
+  const deviceId = createHash('sha256').update(publicKey).digest('hex');
   const key: DeviceKey = {
     deviceId,
     publicKey: publicKey,
