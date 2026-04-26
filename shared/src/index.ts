@@ -1,22 +1,19 @@
 /**
  * OpenClaw Sidebar - Shared Type Definitions
  *
- * ⚠️ 重要：以下类型定义为基于 OpenClaw 文档的推测值。
- * 实际 RPC 方法名、事件名、payload 结构需在 Phase 2/3 开发时通过抓包确认。
+ * ✅ 已通过抓包验证的类型（来自 frames.d.ts）
+ * ⚠️ 待抓包验证的类型已标注
  *
  * 文档参考：
+ * - /usr/lib/node_modules/openclaw/dist/plugin-sdk/src/gateway/protocol/schema/frames.d.ts
  * - https://docs.openclaw.ai/gateway/protocol.md
  * - https://docs.openclaw.ai/concepts/streaming.md
- * - https://docs.openclaw.ai/concepts/typing-indicators
  */
 
 // ============================================================================
 // Gateway Frame Types (OpenClaw Gateway Protocol)
 // ============================================================================
 
-/**
- * Gateway Request Frame - Extension → Gateway (经 Relay 透传)
- */
 export interface GatewayRequest {
   type: 'req';
   id: string;
@@ -24,9 +21,6 @@ export interface GatewayRequest {
   params: Record<string, unknown>;
 }
 
-/**
- * Gateway Response Frame - Gateway → Extension (经 Relay 透传)
- */
 export interface GatewayResponse {
   type: 'res';
   id: string;
@@ -38,9 +32,6 @@ export interface GatewayResponse {
   };
 }
 
-/**
- * Gateway Event Frame - Gateway → Extension (经 Relay 透传，事件推送)
- */
 export interface GatewayEvent {
   type: 'event';
   event: string;
@@ -49,13 +40,137 @@ export interface GatewayEvent {
   stateVersion?: string;
 }
 
-/**
- * 三帧合一（用于 Relay 内部处理）
- */
 export type GatewayFrame = GatewayRequest | GatewayResponse | GatewayEvent;
 
 // ============================================================================
-// Session RPC Methods (基于 protocol.md)
+// Connect Params (✅ 已验证)
+// ============================================================================
+
+/** client.id 的有效枚举值 */
+export type ClientId =
+  | 'cli'
+  | 'webchat'
+  | 'test'
+  | 'webchat-ui'
+  | 'openclaw-control-ui'
+  | 'openclaw-tui'
+  | 'gateway-client'
+  | 'openclaw-macos'
+  | 'openclaw-ios'
+  | 'openclaw-android'
+  | 'node-host'
+  | 'fingerprint'
+  | 'openclaw-probe';
+
+/** client.mode 的有效枚举值 */
+export type ClientMode = 'cli' | 'node' | 'webchat' | 'ui' | 'test' | 'backend' | 'probe';
+
+/** ✅ 已验证的 Connect Params（来自 frames.d.ts） */
+export interface ConnectParams {
+  minProtocol: number;
+  maxProtocol: number;
+  client: {
+    id: ClientId;
+    displayName?: string;
+    version: string;
+    platform: string;
+    deviceFamily?: string;
+    modelIdentifier?: string;
+    mode: ClientMode;
+    instanceId?: string;
+  };
+  caps?: string[];
+  commands?: string[];
+  permissions?: Record<string, boolean>;
+  pathEnv?: string;
+  role?: string;
+  scopes?: string[];
+  device?: {
+    id: string;
+    publicKey: string;
+    signature: string;
+    signedAt: number;
+    nonce: string;
+  };
+  auth?: {
+    token?: string;
+    bootstrapToken?: string;
+    deviceToken?: string;
+    password?: string;
+  };
+  locale?: string;
+  userAgent?: string;
+}
+
+// ============================================================================
+// Hello Ok (✅ 已验证)
+// ============================================================================
+
+export interface HelloOkPayload {
+  type: 'hello-ok';
+  protocol: number;
+  server: {
+    version: string;
+    connId: string;
+  };
+  features: {
+    methods: string[];
+    events: string[];
+  };
+  snapshot: {
+    presence: PresenceEntry[];
+    health: unknown;
+    stateVersion: {
+      presence: number;
+      health: number;
+    };
+    uptimeMs: number;
+    configPath?: string;
+    stateDir?: string;
+    sessionDefaults?: {
+      defaultAgentId: string;
+      mainKey: string;
+      mainSessionKey: string;
+      scope?: string;
+    };
+    authMode?: 'none' | 'token' | 'password' | 'trusted-proxy';
+    updateAvailable?: {
+      currentVersion: string;
+      latestVersion: string;
+      channel: string;
+    };
+  };
+  canvasHostUrl?: string;
+  auth?: {
+    deviceToken: string;
+    role: string;
+    scopes: string[];
+    issuedAtMs?: number;
+    deviceTokens?: Array<unknown>;
+  };
+}
+
+export interface PresenceEntry {
+  instanceId: string;
+  host?: string;
+  ip?: string;
+  version?: string;
+  platform?: string;
+  deviceFamily?: string;
+  modelIdentifier?: string;
+  mode?: string;
+  lastInputSeconds?: number;
+  reason?: string;
+  tags?: string[];
+  text?: string;
+  ts: number;
+  deviceId?: string;
+  roles?: string[];
+  scopes?: string[];
+}
+
+// ============================================================================
+// Session RPC Methods (⚠️ 待抓包确认)
 // ============================================================================
 
 export interface SessionsCreateParams {
@@ -98,51 +213,33 @@ export interface ImagePart {
 }
 
 // ============================================================================
-// Streaming Events (基于 streaming.md 和 protocol.md)
+// Streaming Events (⚠️ 待抓包确认事件名)
 // ============================================================================
 
-/**
- * 流式输出相关事件（session.message 事件族）
- * ⚠️ 事件名基于文档推测，实际需抓包确认
- */
 export type StreamingEvent =
-  | 'session.message.start'   // 流式消息开始
-  | 'session.message.delta'   // 流式内容块（delta 增量）
-  | 'session.message.end';    // 流式消息结束
+  | 'session.message.start'
+  | 'session.message.delta'
+  | 'session.message.end';
 
-/**
- * 工具执行相关事件
- * ⚠️ 事件名基于文档推测，实际需抓包确认
- */
 export type ToolEvent =
-  | 'session.tool.start'       // 工具执行开始
-  | 'session.tool.delta'        // 工具执行输出
-  | 'session.tool.end';        // 工具执行结束
+  | 'session.tool.start'
+  | 'session.tool.delta'
+  | 'session.tool.end';
 
-/**
- * 会话相关事件
- */
 export type SessionEvent =
-  | 'sessions.changed'          // 会话列表变更（创建/删除/修改）
-  | 'session.message';         // 消息/转录事件流
+  | 'sessions.changed'
+  | 'session.message';
 
-/**
- * Typing Indicator 相关事件
- * 基于 typing-indicators 文档，typing 是 liveness 信号
- */
 export type TypingEvent =
   | 'typing.start'
   | 'typing.end';
 
-/**
- * 系统事件
- */
 export type SystemEvent =
-  | 'tick'                      // 心跳保活（15s 间隔，由 policy.tickIntervalMs 定义）
-  | 'heartbeat'                 // 心跳响应
-  | 'hello-ok'                  // 连接握手成功（含 snapshot 快照）
-  | 'shutdown';                 // Gateway 关闭通知
-  | 'connect.challenge';        // 连接握手 challenge
+  | 'tick'
+  | 'heartbeat'
+  | 'hello-ok'
+  | 'shutdown'
+  | 'connect.challenge';
 
 export type GatewayEventName =
   | StreamingEvent
@@ -152,50 +249,37 @@ export type GatewayEventName =
   | SystemEvent;
 
 // ============================================================================
-// Snapshot (hello-ok payload)
+// Pairing API (chrome-openclaw-sider 使用的方式)
 // ============================================================================
 
-export interface HelloOkPayload {
-  protocolVersion: string;
-  serverInfo: Record<string, unknown>;
-  features: string[];
-  snapshot: {
-    sessions: SessionSummary[];
-    presence: PresenceEntry[];
-  };
-  policy: {
-    maxPayload: number;
-    maxBufferedBytes: number;
-    tickIntervalMs: number;
-  };
+/**
+ * Extension → Relay → Gateway 配对流程
+ * 1. Extension 请求配对码
+ * 2. 用户在 Gateway UI 确认
+ * 3. Extension 轮询配对状态，获取 token
+ * 4. 用 token 建立 WebSocket 连接
+ *
+ * ⚠️ 实际测试发现：Gateway 要求 DEVICE_IDENTITY_REQUIRED
+ * 即使用 device token 认证，或走 pairing 流程获取 token
+ */
+
+export interface PairingRequestResponse {
+  pairing_code: string;
+  pairing_token: string;
+  expires_at: number;
 }
 
-export interface SessionSummary {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  // ⚠️ 其他字段需抓包确认
-}
-
-export interface PresenceEntry {
-  instanceId: string;
-  host: string;
-  ip: string;
-  version: string;
-  deviceFamily: string;
-  mode: string;
-  lastInputSeconds: number;
-  reason: string;
-  ts: number;
+export interface PairingStatusResponse {
+  status: 'pending' | 'paired' | 'expired' | 'rejected';
+  claw_id?: string;
+  token?: string;
+  expires_at?: number;
 }
 
 // ============================================================================
 // Relay ↔ Extension Message Types
 // ============================================================================
 
-/**
- * Relay → Extension 的消息统一格式（简化处理）
- */
 export interface RelayMessage {
   type: 'req' | 'res' | 'event';
   requestId: string;
@@ -209,9 +293,6 @@ export interface RelayMessage {
   };
 }
 
-/**
- * Extension 侧连接状态
- */
 export type ConnectionState =
   | 'disconnected'
   | 'connecting'
@@ -221,33 +302,21 @@ export type ConnectionState =
   | 'error';
 
 // ============================================================================
-// Streaming Payload Types (基于 streaming.md)
+// Streaming Payload Types (⚠️ 待抓包确认 payload 结构)
 // ============================================================================
 
-/**
- * session.message.delta 的 payload 结构
- * ⚠️ 基于文档推测，实际字段需抓包确认
- */
 export interface MessageDeltaPayload {
   sessionId: string;
-  delta: string;  // 增量文本
-  seq: number;    // 序列号，用于排序
+  delta: string;
+  seq: number;
 }
 
-/**
- * session.message.start 的 payload 结构
- * ⚠️ 基于文档推测，实际字段需抓包确认
- */
 export interface MessageStartPayload {
   sessionId: string;
   messageId: string;
   seq: number;
 }
 
-/**
- * session.message.end 的 payload 结构
- * ⚠️ 基于文档推测，实际字段需抓包确认
- */
 export interface MessageEndPayload {
   sessionId: string;
   messageId: string;
@@ -259,8 +328,9 @@ export interface MessageEndPayload {
 
 export interface AuthData {
   token: string;
-  relayId: string;
+  deviceToken: string;
   expiresAt: number;
+  clawId: string;
 }
 
 export interface SessionMeta {
@@ -291,7 +361,9 @@ export interface RelayConfig {
   gateway: {
     host: string;
     port: number;
-    token: string;
+  };
+  pairing: {
+    apiBase: string;  // e.g. http://127.0.0.1:18789
   };
   heartbeat: {
     extIntervalMs: number;
