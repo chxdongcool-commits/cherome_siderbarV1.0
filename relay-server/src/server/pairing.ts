@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { sign as cryptoSign, generateKeyPairSync } from 'crypto';
+import { sign as cryptoSign, generateKeyPairSync, createHash } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -32,8 +32,7 @@ export function generateDeviceKey(): DeviceKey {
 
   // DeviceId = SHA256 of raw 32-byte public key
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
-  const crypto = require('crypto');
-  const deviceId = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
   // Export as PEM
   const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
