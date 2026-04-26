@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-relay
+    restart: unless-stopped
+    ports:
+      - "18791:18791"
+    environment:
+      - NODE_ENV=production
+      - DEVICE_TOKEN=${DEVICE_TOKEN:-}
+      - CONFIG_FILE=/app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - openclaw
+
+networks:
+  openclaw:
+    driver: bridge

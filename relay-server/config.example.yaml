@@ -1,0 +1,24 @@
+# OpenClaw Relay Server Configuration
+# Copy to config.yaml and update values
+
+gateway:
+  host: 127.0.0.1
+  port: 18789
+
+pairing:
+  apiBase: http://127.0.0.1:18789
+  # deviceToken: Set via DEVICE_TOKEN environment variable or omit to run pairing flow
+
+relay:
+  host: 0.0.0.0
+  port: 18791
+  tls:
+    enabled: false
+    # keyPath: /path/to/tls.key
+    # certPath: /path/to/tls.cert
+
+heartbeat:
+  extIntervalMs: 30000
+  extTimeoutMs: 60000
+  gwIntervalMs: 15000
+  gwTimeoutMs: 45000
