@@ -191,7 +191,7 @@ export async function performPairingWebSocket(
             const signDataStr = `${deviceKey.deviceId}|${nonceHex}|${signedAt}`;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
-            logger.info({ signDataStr }, 'Signature payload');
+            logger.info({ signDataStr, publicKey: deviceKey.publicKey, publicKeyLen: deviceKey.publicKey.length }, 'Signature payload');
 
             ws!.send(JSON.stringify({
               type: 'req',
