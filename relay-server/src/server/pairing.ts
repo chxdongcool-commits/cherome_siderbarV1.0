@@ -184,8 +184,8 @@ export async function performPairingWebSocket(
             const challengePayload = frame.payload as { nonce: string; ts: number };
             logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
 
-            // Sign: deviceId:serverNonce:serverTs (just the challenge data, no extra timestamp)
-            const signDataStr = `${deviceKey.deviceId}:${challengePayload.nonce}:${challengePayload.ts}`;
+            // Sign: just the server nonce
+            const signDataStr = challengePayload.nonce;
             const signature = signData(signDataStr, deviceKey.privateKey);
 
             ws!.send(JSON.stringify({
