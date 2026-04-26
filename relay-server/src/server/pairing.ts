@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, generateKeyPairSync, sign as cryptoSign } from 'crypto';
+import { generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -166,33 +166,8 @@ export async function performPairingWebSocket(
               const errorCode = frame.error?.code;
               const errorDetails = frame.error?.details;
 
-              // NOT_PAIRED - 需要发起配对请求
-              if (errorCode === 'NOT_PAIRED' || errorDetails?.code === 'DEVICE_IDENTITY_REQUIRED') {
-                logger.info('Device not paired, initiating pairing request...');
-                onStatusChange?.('pending');
-
-                // 发送 node.pair.request
-                requestId = randomUUID();
-                ws!.send(JSON.stringify({
-                  type: 'req',
-                  id: requestId,
-                  method: 'node.pair.request',
-                  params: {
-                    device: {
-                      id: deviceKey.deviceId,
-                      publicKey: deviceKey.publicKey,
-                    },
-                    metadata: {
-                      platform: 'linux',
-                      clientVersion: '1.0.0',
-                      relayServer: true,
-                    },
-                  },
-                }));
-              } else {
-                logger.error({ error: frame.error }, 'Connect rejected');
-                fail(new Error(`Connect rejected: ${frame.error?.message}`));
-              }
+              logger.error({ errorCode, errorDetails }, 'Connect rejected - pairing required but not implemented');
+              fail(new Error(`Connect rejected: ${frame.error?.message}`));
             } else {
               // 连接成功 (已配对)
               logger.info({ connId: frame.payload?.server?.connId }, 'Already paired, connection successful');
