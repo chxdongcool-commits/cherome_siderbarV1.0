@@ -145,14 +145,10 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，发送 connect 请求 (带设备身份)
+          // 1. 收到 challenge，先发送不带设备身份的 connect 请求
+          // 如果设备未配对，gateway 会返回 NOT_PAIRED
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request with device identity...');
-
-            const nonce = randomUUID();
-            const signedAt = Date.now();
-            const dataToSign = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
-            const signature = signData(dataToSign, deviceKey.privateKey);
+            logger.info('Received connect.challenge, sending connect request (no device identity yet)...');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -169,13 +165,6 @@ export async function performPairingWebSocket(
                 },
                 role: 'node',
                 scopes: [],
-                device: {
-                  id: deviceKey.deviceId,
-                  publicKey: deviceKey.publicKey,
-                  signature: signature,
-                  signedAt: signedAt,
-                  nonce: nonce,
-                },
               },
             }));
           }
