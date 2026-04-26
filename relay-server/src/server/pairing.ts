@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { randomUUID, generateKeyPairSync, createSign, createHash } from 'crypto';
+import { randomUUID, generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -50,19 +50,15 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     logger.warn({ err }, 'Failed to load device key, creating new one');
   }
 
-  // 生成新密钥对 (使用 RSA-SHA256)
-  const { publicKey, privateKey } = generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-  });
+  // 生成新密钥对 (使用 Ed25519)
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 
-  // 使用公钥的 SHA256 哈希作为稳定设备 ID
-  const deviceId = createHash('sha256').update(publicKey).digest('hex');
+  // Ed25519 公钥是 32 字节，转换为 base64 作为 deviceId
+  const deviceId = publicKey.export({ type: 'spki', format: 'der' }).slice(-32).toString('base64');
   const key: DeviceKey = {
     deviceId,
-    publicKey: publicKey,
-    privateKey: privateKey,
+    publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
   };
 
   // 确保目录存在
@@ -79,13 +75,12 @@ export function loadOrCreateDeviceKey(): DeviceKey {
 }
 
 /**
- * 对数据签名 (使用 RSA-SHA256)
+ * 对数据签名 (使用 Ed25519)
  */
 export function signData(data: string, privateKey: string): string {
-  const sign = createSign('RSA-SHA256');
-  sign.update(data);
-  sign.end();
-  return sign.sign(privateKey, 'base64');
+  // Ed25519 signing using Node.js crypto
+  const signature = cryptoSign(null, Buffer.from(data), privateKey);
+  return signature.toString('base64');
 }
 
 /**
