@@ -137,6 +137,7 @@ export async function performPairingWebSocket(
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let resolved = false;
+    let waitingForPairing = false;
     let pairingToken: string | null = null;
 
     const cleanup = () => {
@@ -177,10 +178,18 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，发送不带设备身份的 connect 请求
+          // Wait for connect.challenge to get the nonce, then send connect with device identity
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
             const challengePayload = frame.payload as { nonce: string; ts: number };
-            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request without device identity...');
+            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
+
+            // Build v2 signature payload: v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
+            const scopes = ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'].join(',');
+            const signedAtMs = Date.now();
+            const payload = `v2|${deviceKey.deviceId}|cli|cli|operator|${scopes}|${signedAtMs}||${challengePayload.nonce}`;
+            const signature = signData(payload, deviceKey.privateKey);
+
+            logger.info({ payload }, 'Signature payload');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -197,19 +206,26 @@ export async function performPairingWebSocket(
                 },
                 role: 'operator',
                 scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
-                // Don't include device.identity - let Gateway reject with NOT_PAIRED
+                device: {
+                  id: deviceKey.deviceId,
+                  publicKey: deviceKey.publicKey,
+                  signature: signature,
+                  signedAt: signedAtMs,
+                  nonce: challengePayload.nonce,
+                },
               },
             }));
           }
-          // 2. 收到 connect 响应 (NOT_PAIRED)
+          // 2. 收到 connect 响应
           else if (frame.type === 'res' && frame.id === 'relay-connect') {
             if (!frame.ok) {
               const errorCode = frame.error?.code;
               const errorDetails = frame.error?.details;
 
               if (errorCode === 'NOT_PAIRED' && errorDetails?.code === 'DEVICE_IDENTITY_REQUIRED') {
-                // Device not paired yet - initiate pairing request
-                logger.info('Device not paired, initiating node.pair.request...');
+                // Send pairing request with device identity this time
+                logger.info('Sending node.pair.request with device identity...');
+                waitingForPairing = true;
 
                 ws!.send(JSON.stringify({
                   type: 'req',
@@ -297,7 +313,8 @@ export async function performPairingWebSocket(
       });
 
       ws.on('close', () => {
-        if (!resolved) {
+        logger.info('WebSocket closed, waitingForPairing=' + waitingForPairing);
+        if (!resolved && !waitingForPairing) {
           fail(new Error('WebSocket closed unexpectedly'));
         }
       });
