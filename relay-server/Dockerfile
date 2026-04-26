@@ -13,7 +13,7 @@ COPY relay-server/tsconfig.json ./relay-server/
 COPY relay-server/src ./relay-server/src
 
 # Install all workspace dependencies
-RUN npm ci
+RUN npm install
 
 # Build shared first, then relay-server
 RUN npm run build --workspace=@openclaw/shared && \
