@@ -1,7 +1,8 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useAppStore } from './store';
+import { useAppStore, type Message } from './store';
+import { useStorageSync } from './useStorage';
 import './styles.css';
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -9,48 +10,91 @@ type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecti
 export function App() {
   const {
     connectionState,
-    messages,
+    activeSessionId,
+    sessions,
     isTyping,
     setConnectionState,
+    setActiveSession,
+    addSession,
+    updateSession,
+    setSessions,
+    getCurrentMessages,
     addMessage,
-    appendToMessage,
     updateMessage,
+    appendToMessage,
     setTyping,
   } = useAppStore();
 
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [showSessionList, setShowSessionList] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize storage and sync with IndexedDB
+  useStorageSync();
+
+  // Sync messages when active session changes
+  useEffect(() => {
+    setMessages(getCurrentMessages());
+  }, [activeSessionId, getCurrentMessages]);
+
+  // Keep messages in sync with store
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMessages(getCurrentMessages());
+    }, 100);
+    return () => clearInterval(interval);
+  }, [getCurrentMessages]);
 
   const handleGatewayEvent = useCallback((event: string, payload: unknown) => {
     const p = payload as { sessionId?: string; messageId?: string; delta?: string };
-    const currentMessages = useAppStore.getState().messages;
+    const state = useAppStore.getState();
 
     switch (event) {
       case 'session.message.start': {
+        const sessionId = state.activeSessionId;
+        if (!sessionId) break;
         const msgId = p.messageId || crypto.randomUUID();
-        addMessage({
+        const msg: Message = {
           id: msgId,
           role: 'assistant',
           parts: [{ type: 'text', text: '' }],
           status: 'streaming',
           createdAt: Date.now(),
-        });
+        };
+        addMessage(msg);
         break;
       }
 
       case 'session.message.delta': {
-        const lastMsg = [...currentMessages].reverse().find((m) => m.status === 'streaming');
+        const sessionId = state.activeSessionId;
+        if (!sessionId) break;
+        const sessionMessages = state.messagesBySession[sessionId] || [];
+        const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
         if (lastMsg) {
-          appendToMessage(lastMsg.id, p.delta || '');
+          appendToMessage(sessionId, lastMsg.id, p.delta || '');
         }
         break;
       }
 
       case 'session.message.end': {
-        const lastMsg = [...currentMessages].reverse().find((m) => m.status === 'streaming');
+        const sessionId = state.activeSessionId;
+        if (!sessionId) break;
+        const sessionMessages = state.messagesBySession[sessionId] || [];
+        const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
         if (lastMsg) {
-          updateMessage(lastMsg.id, { status: 'complete' });
+          updateMessage(sessionId, lastMsg.id, { status: 'complete' });
         }
         setTyping(false);
+        break;
+      }
+
+      case 'sessions.changed': {
+        // Reload sessions list
+        chrome.runtime.sendMessage({ type: 'get-sessions' }, (response) => {
+          if (response?.sessions) {
+            setSessions(response.sessions);
+          }
+        });
         break;
       }
 
@@ -63,24 +107,31 @@ export function App() {
         break;
 
       case 'hello-ok':
-        console.log('Gateway connected:', payload);
+        console.log('Gateway connected');
+        // Request sessions after connected
+        chrome.runtime.sendMessage({ type: 'get-sessions' }, (response) => {
+          if (response?.sessions) {
+            setSessions(response.sessions);
+          }
+        });
         break;
 
       case 'error':
       case 'session.error': {
-        const err = payload as { message?: string; code?: string };
-        console.error('Gateway error:', err);
-        const streaming = useAppStore.getState().messages.find((m) => m.status === 'streaming');
+        const sessionId = state.activeSessionId;
+        if (!sessionId) break;
+        const sessionMessages = state.messagesBySession[sessionId] || [];
+        const streaming = sessionMessages.find((m) => m.status === 'streaming');
         if (streaming) {
-          updateMessage(streaming.id, { status: 'error' });
+          updateMessage(sessionId, streaming.id, { status: 'error' });
         }
         setTyping(false);
         break;
       }
     }
-  }, [addMessage, appendToMessage, updateMessage, setTyping]);
+  }, [addMessage, appendToMessage, updateMessage, setTyping, setSessions]);
 
-  // Connect to service worker and listen for events
+  // Connect to service worker
   useEffect(() => {
     const port = chrome.runtime.connect({ name: 'openclaw-sidebar' });
 
@@ -110,29 +161,55 @@ export function App() {
     };
   }, [setConnectionState, handleGatewayEvent]);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  async function createNewSession() {
+    const sessionId = crypto.randomUUID();
+    const newSession = {
+      id: sessionId,
+      title: 'New Chat',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    addSession(newSession);
+    setActiveSession(sessionId);
+    setShowSessionList(false);
+  }
+
   async function handleSend(text: string) {
     if (!text.trim() || connectionState !== 'connected') return;
 
+    const sessionId = useAppStore.getState().activeSessionId;
+    if (!sessionId) return;
+
     const messageId = crypto.randomUUID();
-    addMessage({
+    const msg: Message = {
       id: messageId,
       role: 'user',
       parts: [{ type: 'text', text: text.trim() }],
       status: 'complete',
       createdAt: Date.now(),
-    });
+    };
+
+    addMessage(msg);
+
+    // Update session title from first message
+    const sessionMessages = useAppStore.getState().messagesBySession[sessionId] || [];
+    if (sessionMessages.length === 1) {
+      const title = text.trim().substring(0, 30) + (text.length > 30 ? '...' : '');
+      updateSession(sessionId, { title, updatedAt: Date.now() });
+    }
 
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'req',
         method: 'sessions.send',
         params: {
-          sessionId: useAppStore.getState().activeSessionId,
+          sessionId,
           parts: [{ type: 'text', text: text.trim() }],
         },
       });
@@ -148,43 +225,85 @@ export function App() {
   return (
     <div className="app">
       <header className="header">
-        <span className="header-title">OpenClaw</span>
+        <button className="session-toggle" onClick={() => setShowSessionList(!showSessionList)}>
+          ☰
+        </button>
+        <span className="header-title">
+          {activeSessionId
+            ? sessions.find((s) => s.id === activeSessionId)?.title || 'OpenClaw'
+            : 'OpenClaw'}
+        </span>
         <ConnectionIndicator state={connectionState} />
       </header>
 
+      {showSessionList && (
+        <div className="session-list">
+          <div className="session-list-header">
+            <span>Conversations</span>
+            <button className="new-session-btn" onClick={createNewSession}>
+              + New
+            </button>
+          </div>
+          <div className="session-items">
+            {sessions.length === 0 ? (
+              <div className="no-sessions">No conversations yet</div>
+            ) : (
+              sessions.map((session) => (
+                <div
+                  key={session.id}
+                  className={`session-item ${session.id === activeSessionId ? 'active' : ''}`}
+                  onClick={() => {
+                    setActiveSession(session.id);
+                    setShowSessionList(false);
+                  }}
+                >
+                  <span className="session-title">{session.title}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <main className="messages">
-        {messages.length === 0 ? (
+        {!activeSessionId ? (
           <div className="welcome">
             <p>Welcome to OpenClaw Sidebar</p>
             <p className="welcome-sub">
-              {connectionState === 'connected'
-                ? 'Select a session or start a new conversation'
-                : connectionState === 'connecting'
-                ? 'Connecting to server...'
-                : connectionState === 'reconnecting'
-                ? 'Reconnecting...'
-                : 'Disconnected. Please refresh.'}
+              {connectionState === 'connected' ? (
+                <>
+                  <button className="start-chat-btn" onClick={createNewSession}>
+                    Start a conversation
+                  </button>
+                </>
+              ) : connectionState === 'connecting' ? (
+                'Connecting to server...'
+              ) : connectionState === 'reconnecting' ? (
+                'Reconnecting...'
+              ) : (
+                'Disconnected. Please refresh.'
+              )}
             </p>
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="welcome">
+            <p>Start a conversation</p>
+            <p className="welcome-sub">Type a message below to begin</p>
           </div>
         ) : (
           <div className="message-list">
             {messages.map((msg) => (
               <div key={msg.id} className={`message message-${msg.role}`}>
                 <div className="message-content">
-                  {msg.parts.map((part, i) => (
+                  {msg.parts.map((part, i) =>
                     part.type === 'text' ? (
-                      <ReactMarkdown
-                        key={i}
-                        remarkPlugins={[remarkGfm]}
-                        className="markdown-content"
-                      >
+                      <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} className="markdown-content">
                         {part.text}
                       </ReactMarkdown>
                     ) : null
-                  ))}
-                  {msg.status === 'streaming' && (
-                    <span className="cursor" />
                   )}
+                  {msg.status === 'streaming' && <span className="cursor" />}
+                  {msg.status === 'error' && <span className="error-badge">Error</span>}
                 </div>
               </div>
             ))}
@@ -207,9 +326,15 @@ export function App() {
       <footer className="input-area">
         <textarea
           className="input-box"
-          placeholder={connectionState === 'connected' ? 'Type a message...' : 'Waiting for connection...'}
+          placeholder={
+            activeSessionId
+              ? connectionState === 'connected'
+                ? 'Type a message...'
+                : 'Waiting for connection...'
+              : 'Start a new conversation first'
+          }
           rows={1}
-          disabled={connectionState !== 'connected'}
+          disabled={connectionState !== 'connected' || !activeSessionId}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -221,7 +346,7 @@ export function App() {
         />
         <button
           className="send-btn"
-          disabled={connectionState !== 'connected'}
+          disabled={connectionState !== 'connected' || !activeSessionId}
           onClick={() => {
             const input = document.querySelector('.input-box') as HTMLTextAreaElement;
             if (input?.value) {

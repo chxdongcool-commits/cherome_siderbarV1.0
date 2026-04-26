@@ -248,6 +248,36 @@ chrome.runtime.onMessage.addListener((message, _port, sendResponse) => {
       sendResponse({ state: connectionState });
       return true;
 
+    case 'get-sessions': {
+      // Request sessions list from Gateway
+      const id = crypto.randomUUID();
+      const frame: Frame = {
+        type: 'req',
+        id,
+        method: 'sessions.list',
+        params: {},
+      };
+
+      if (!sendToRelay(frame)) {
+        sendResponse({ sessions: [] });
+        return true;
+      }
+
+      pendingRequests.set(id, {
+        resolve: (payload) => sendResponse({ sessions: (payload as { sessions?: unknown[] })?.sessions || [] }),
+        reject: () => sendResponse({ sessions: [] }),
+      });
+
+      setTimeout(() => {
+        if (pendingRequests.has(id)) {
+          pendingRequests.delete(id);
+          sendResponse({ sessions: [] });
+        }
+      }, 5000);
+
+      return true;
+    }
+
     case 'set-active-session':
       activeSessionId = message.sessionId;
       logger.info('Active session set', activeSessionId);
