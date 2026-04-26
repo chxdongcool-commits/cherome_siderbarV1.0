@@ -140,10 +140,9 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // 1. 收到 challenge，先尝试最简单的 connect 请求（无 role 无 scopes）
-          // 如果 dangerouslyDisableDeviceAuth 为 true，可能会成功
+          // 1. 收到 challenge，尝试 backend 模式连接
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending minimal connect request...');
+            logger.info('Received connect.challenge, sending backend mode connect request...');
 
             ws!.send(JSON.stringify({
               type: 'req',
@@ -153,10 +152,10 @@ export async function performPairingWebSocket(
                 minProtocol: 3,
                 maxProtocol: 3,
                 client: {
-                  id: 'cli',
+                  id: 'gateway-client',
                   version: '1.0.0',
                   platform: 'linux',
-                  mode: 'node',
+                  mode: 'backend',
                 },
               },
             }));
