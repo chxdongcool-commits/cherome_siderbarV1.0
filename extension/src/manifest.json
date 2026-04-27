@@ -8,7 +8,7 @@
     "storage"
   ],
   "host_permissions": [
-    "wss://47.89.181.91:18790/*",
+    "ws://47.89.181.91:18791/*",
     "http://47.89.181.91:18791/*"
   ],
   "background": {
@@ -30,7 +30,7 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' wss://47.89.181.91:18790 ws://47.89.181.91:18791; img-src 'self' https: data: blob:"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://47.89.181.91:18791 http://47.89.181.91:18791; img-src 'self' https: data: blob:"
   },
   "web_accessible_resources": [
     {

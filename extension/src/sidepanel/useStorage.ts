@@ -89,13 +89,14 @@ export function useStorageSync() {
 
     const messages = useAppStore.getState().messagesBySession[activeSessionId] || [];
     for (const msg of messages) {
+      if (!msg?.id) continue;
       saveMessage({
         id: msg.id,
         sessionId: activeSessionId,
-        role: msg.role,
-        parts: msg.parts,
+        role: msg.role || 'assistant',
+        parts: msg.parts || [],
         status: msg.status,
-        createdAt: msg.createdAt,
+        createdAt: msg.createdAt || Date.now(),
       }).catch(console.error);
     }
   }, [activeSessionId]);

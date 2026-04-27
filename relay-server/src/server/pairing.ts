@@ -14,7 +14,7 @@
  * 8. 保存 token，用于后续连接
  */
 
-import { sign as cryptoSign, generateKeyPairSync, createHash } from 'crypto';
+import { sign as cryptoSign, generateKeyPairSync, createHash, createPublicKey } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -34,13 +34,13 @@ export function generateDeviceKey(): DeviceKey {
   const rawKey = (publicKey as any).export({ type: 'spki', format: 'der' }).slice(-32);
   const deviceId = createHash('sha256').update(rawKey).digest('hex');
 
-  // Store SPKI PEM format - the Gateway expects this format in connect
-  const publicKeyPem = (publicKey as any).export({ type: 'spki', format: 'pem' }) as string;
+  // Store raw 32-byte base64 for public key (Gateway derives deviceId from this)
+  const publicKeyRaw = rawKey.toString('base64');
   const privateKeyPem = (privateKey as any).export({ type: 'pkcs8', format: 'pem' }) as string;
 
   return {
     deviceId,
-    publicKey: publicKeyPem,
+    publicKey: publicKeyRaw,
     privateKey: privateKeyPem,
   };
 }
@@ -62,6 +62,8 @@ export function publicKeyToPem(publicKey: any): string {
 export interface PairingResult {
   deviceToken: string;
   deviceId: string;
+  pendingApproval?: boolean;
+  pairingToken?: string | null;
 }
 
 interface DeviceKey {
@@ -92,6 +94,36 @@ export function loadOrCreateDeviceKey(): DeviceKey {
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to load device key from file');
+  }
+
+  // Try to load from Gateway's device identity file (for already-paired devices)
+  const gatewayDeviceIdentityPath = join(homedir(), '.openclaw', 'identity', 'device.json');
+  try {
+    if (existsSync(gatewayDeviceIdentityPath)) {
+      const content = readFileSync(gatewayDeviceIdentityPath, 'utf-8');
+      const identity = JSON.parse(content);
+      if (identity.privateKeyPem && identity.publicKeyPem) {
+        // Compute deviceId from the public key (same as Gateway does)
+        const publicKey = createPublicKey(identity.publicKeyPem);
+        const rawKey = publicKey.export({ type: 'spki', format: 'der' }).slice(-32);
+        const deviceId = createHash('sha256').update(rawKey).digest('hex');
+        const deviceKey: DeviceKey = {
+          deviceId,
+          publicKey: rawKey.toString('base64'),
+          privateKey: identity.privateKeyPem,
+        };
+        logger.info({ deviceId }, 'Loaded device key from Gateway identity (already paired)');
+        // Save for future use
+        try {
+          const dir = join(homedir(), '.openclaw-relay');
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(DEVICE_KEY_PATH, JSON.stringify(deviceKey, null, 2));
+        } catch {}
+        return deviceKey;
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to load device key from Gateway identity');
   }
 
   // Generate new key pair
@@ -138,6 +170,7 @@ export async function performPairingWebSocket(
     let ws: WebSocket | null = null;
     let resolved = false;
     let waitingForPairing = false;
+    let pairingAttempt = 0; // Track which attempt this is
     let pairingToken: string | null = null;
 
     const cleanup = () => {
@@ -178,46 +211,73 @@ export async function performPairingWebSocket(
         try {
           const frame = JSON.parse(data.toString());
 
-          // Wait for connect.challenge to get the nonce, then send connect with device identity
+          // Wait for connect.challenge
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
             const challengePayload = frame.payload as { nonce: string; ts: number };
-            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request with device identity...');
+            logger.info({ nonce: challengePayload.nonce, pairingAttempt }, 'Received connect.challenge');
 
-            // Build v2 signature payload: v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
-            const scopes = ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'].join(',');
-            const signedAtMs = Date.now();
-            const payload = `v2|${deviceKey.deviceId}|cli|cli|operator|${scopes}|${signedAtMs}||${challengePayload.nonce}`;
-            const signature = signData(payload, deviceKey.privateKey);
+            if (pairingAttempt === 0) {
+              // First attempt: send WITHOUT device identity to get NOT_PAIRED
+              logger.info('Attempt 0: Sending connect without device identity...');
+              ws!.send(JSON.stringify({
+                type: 'req',
+                id: 'relay-connect',
+                method: 'connect',
+                params: {
+                  minProtocol: 3,
+                  maxProtocol: 3,
+                  client: {
+                    id: 'cli',
+                    version: '1.0.0',
+                    platform: 'linux',
+                    mode: 'cli',
+                  },
+                  role: 'node',
+                  scopes: [],
+                  auth: {
+                    token: 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU',
+                  },
+                },
+              }));
+              pairingAttempt = 1;
+            } else {
+              // Subsequent attempts (after node.pair.request): send with device identity
+              logger.info(`Attempt ${pairingAttempt}: Sending connect with device identity...`);
+              const OPERATOR_TOKEN = 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU';
+              const scopes = ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'].join(',');
+              const signedAtMs = Date.now();
+              const payload = `v2|${deviceKey.deviceId}|cli|cli|operator|${scopes}|${signedAtMs}|${OPERATOR_TOKEN}|${challengePayload.nonce}`;
+              logger.info({ payload, publicKey: deviceKey.publicKey }, 'Signature payload for v2');
+              const signature = signData(payload, deviceKey.privateKey);
 
-            logger.info({ payload }, 'Signature payload');
-
-            ws!.send(JSON.stringify({
-              type: 'req',
-              id: 'relay-connect',
-              method: 'connect',
-              params: {
-                minProtocol: 3,
-                maxProtocol: 3,
-                client: {
-                  id: 'cli',
-                  version: '1.0.0',
-                  platform: 'linux',
-                  mode: 'cli',
+              ws!.send(JSON.stringify({
+                type: 'req',
+                id: 'relay-connect',
+                method: 'connect',
+                params: {
+                  minProtocol: 3,
+                  maxProtocol: 3,
+                  client: {
+                    id: 'cli',
+                    version: '1.0.0',
+                    platform: 'linux',
+                    mode: 'cli',
+                  },
+                  role: 'node',
+                  scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+                  auth: {
+                    token: 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU',
+                  },
+                  device: {
+                    id: deviceKey.deviceId,
+                    publicKey: deviceKey.publicKey,
+                    signature: signature,
+                    signedAt: signedAtMs,
+                    nonce: challengePayload.nonce,
+                  },
                 },
-                role: 'operator',
-                scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
-                auth: {
-                  token: 'b5cd1af01f5a5330ddf36554a080a5ee887799f75648a738',
-                },
-                device: {
-                  id: deviceKey.deviceId,
-                  publicKey: deviceKey.publicKey,
-                  signature: signature,
-                  signedAt: signedAtMs,
-                  nonce: challengePayload.nonce,
-                },
-              },
-            }));
+              }));
+            }
           }
           // 2. 收到 connect 响应
           else if (frame.type === 'res' && frame.id === 'relay-connect') {
@@ -226,8 +286,8 @@ export async function performPairingWebSocket(
               const errorDetails = frame.error?.details;
 
               if (errorCode === 'NOT_PAIRED' && errorDetails?.code === 'DEVICE_IDENTITY_REQUIRED') {
-                // Send pairing request with device identity this time
-                logger.info('Sending node.pair.request with device identity...');
+                // Send pairing request
+                logger.info('Sending node.pair.request...');
                 waitingForPairing = true;
 
                 ws!.send(JSON.stringify({
@@ -235,8 +295,10 @@ export async function performPairingWebSocket(
                   id: 'pair-request',
                   method: 'node.pair.request',
                   params: {
-                    role: 'operator',
-                    scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+                    nodeId: deviceKey.deviceId,
+                    displayName: 'OpenClaw Relay',
+                    platform: 'linux',
+                    version: '1.0.0',
                   },
                 }));
               } else {
@@ -261,11 +323,34 @@ export async function performPairingWebSocket(
           }
           // 3. node.pair.request 响应
           else if (frame.type === 'res' && frame.id === 'pair-request') {
+            logger.info({ frame }, 'node.pair.request response');
             if (frame.ok) {
-              const payload = frame.payload as { requestId?: string; status?: string };
+              const payload = frame.payload as { requestId?: string; status?: string; token?: string };
               pairingToken = payload.requestId || null;
-              logger.info({ pairingToken }, 'Pairing request submitted, awaiting admin approval...');
-              onStatusChange?.('awaiting_approval');
+              logger.info({ pairingToken, hasToken: !!payload.token, payload }, 'Pairing request submitted, awaiting admin approval...');
+              // If token is returned immediately, pairing was auto-approved!
+              if (payload.token) {
+                logger.info('Pairing auto-approved with token!');
+                saveToken(payload.token);
+                resolved = true;
+                clearTimeout(timeout);
+                resolve({ deviceToken: payload.token, deviceId: deviceKey.deviceId });
+              } else {
+                // Pairing pending approval - the WebSocket will close, so we need to
+                // resolve now with a special marker so the caller knows to retry.
+                // The caller should wait for admin approval then call us again.
+                onStatusChange?.('awaiting_approval');
+                resolved = true;
+                clearTimeout(timeout);
+                // Return a special result indicating pending approval
+                // Caller should check result.pendingApproval === true
+                resolve({
+                  deviceToken: '',
+                  deviceId: deviceKey.deviceId,
+                  pendingApproval: true,
+                  pairingToken: pairingToken,
+                } as any);
+              }
             } else {
               logger.error({ error: frame.error }, 'Pairing request failed');
               fail(new Error(`Pairing request failed: ${frame.error?.message}`));
@@ -305,6 +390,10 @@ export async function performPairingWebSocket(
           else if (frame.type === 'event') {
             logger.debug({ event: frame.event, payload: frame.payload }, 'Received event');
           }
+          // 调试: 打印所有未处理的响应
+          else if (frame.type === 'res') {
+            logger.info({ frameId: frame.id, ok: frame.ok, payload: frame.payload, error: frame.error }, 'Unhandled response');
+          }
         } catch (err) {
           logger.error({ err }, 'Error processing message');
         }
@@ -320,6 +409,8 @@ export async function performPairingWebSocket(
         if (!resolved && !waitingForPairing) {
           fail(new Error('WebSocket closed unexpectedly'));
         }
+        // After node.pair.request, Gateway closes WebSocket. Pairing resolution happens on reconnect.
+        // The caller (main loop) should retry performPairingWebSocket after admin approval.
       });
 
     } catch (err) {
@@ -349,5 +440,21 @@ export function loadSavedToken(): string | null {
   } catch (err) {
     // ignore
   }
+
+  // Try to load from Gateway's device-auth.json (for already-paired devices)
+  const gatewayDeviceAuthPath = join(homedir(), '.openclaw', 'identity', 'device-auth.json');
+  try {
+    if (existsSync(gatewayDeviceAuthPath)) {
+      const content = readFileSync(gatewayDeviceAuthPath, 'utf-8');
+      const auth = JSON.parse(content);
+      if (auth.tokens?.operator?.token) {
+        logger.info({ deviceId: auth.deviceId }, 'Loaded device token from Gateway device-auth.json');
+        return auth.tokens.operator.token;
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+
   return null;
 }

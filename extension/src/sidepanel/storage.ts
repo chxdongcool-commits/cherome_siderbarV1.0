@@ -9,7 +9,7 @@
  */
 
 const DB_NAME = 'openclaw-sidebar';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORES = {
   SESSIONS: 'sessions',
@@ -35,15 +35,27 @@ export async function initDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
+      const transaction = (event.target as IDBOpenDBRequest).transaction;
 
       // Sessions store
       if (!database.objectStoreNames.contains(STORES.SESSIONS)) {
         database.createObjectStore(STORES.SESSIONS, { keyPath: 'id' });
       }
 
-      // Messages store (keyed by sessionId)
+      // Messages store (keyed by id, with sessionId index)
       if (!database.objectStoreNames.contains(STORES.MESSAGES)) {
-        database.createObjectStore(STORES.MESSAGES, { keyPath: 'id' });
+        const messagesStore = database.createObjectStore(STORES.MESSAGES, { keyPath: 'id' });
+        messagesStore.createIndex('sessionId', 'sessionId', { unique: false });
+      } else if (transaction) {
+        // Add index if it doesn't exist (for existing databases)
+        try {
+          const messagesStore = transaction.objectStore(STORES.MESSAGES);
+          if (!messagesStore.indexNames.contains('sessionId')) {
+            messagesStore.createIndex('sessionId', 'sessionId', { unique: false });
+          }
+        } catch (e) {
+          console.warn('[Storage] Could not add sessionId index:', e);
+        }
       }
 
       // Auth store
@@ -71,6 +83,7 @@ export interface StoredSession {
 }
 
 export async function saveSession(session: StoredSession): Promise<void> {
+  if (!session?.id) return;
   const database = await initDB();
   return new Promise((resolve, reject) => {
     const tx = database.transaction(STORES.SESSIONS, 'readwrite');
@@ -138,6 +151,7 @@ export interface StoredMessage {
 }
 
 export async function saveMessage(message: StoredMessage): Promise<void> {
+  if (!message?.id || !message?.sessionId) return;
   const database = await initDB();
   return new Promise((resolve, reject) => {
     const tx = database.transaction(STORES.MESSAGES, 'readwrite');
@@ -204,6 +218,7 @@ export async function getMeta<T>(key: string): Promise<T | null> {
 }
 
 export async function setMeta<T>(key: string, value: T): Promise<void> {
+  if (!key) return;
   const database = await initDB();
   return new Promise((resolve, reject) => {
     const tx = database.transaction(STORES.META, 'readwrite');

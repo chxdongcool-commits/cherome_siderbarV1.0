@@ -47,9 +47,10 @@ export class RelayWebSocketServer {
     this.wss.on('connection', (ws, req) => {
       const extId = randomUUID();
       const remoteIp = req.socket.remoteAddress || 'unknown';
+      logger.info({ extId, remoteIp, req }, 'INCOMING EXTENSION CONNECTION');
       this.extConnections.set(extId, { id: extId, ws, remoteIp, connectedAt: Date.now(), authenticated: false });
       this.relay.registerExt(extId);
-      logger.info({ extId, remoteIp }, 'Extension connected');
+      logger.info({ extId, remoteIp }, 'Extension registered');
 
       ws.on('message', (data) => this.handleExtMessage(extId, data));
       ws.on('close', () => this.handleExtClose(extId));
@@ -88,14 +89,17 @@ export class RelayWebSocketServer {
           const frame = JSON.parse(data.toString()) as GatewayFrame;
 
           if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            logger.info('Received connect.challenge, sending connect request...');
+            const challengePayload = frame.payload as { nonce: string; ts: number };
+            logger.info({ nonce: challengePayload.nonce }, 'Received connect.challenge, sending connect request...');
 
             // Load device key for this relay
             const deviceKey = loadOrCreateDeviceKey();
-            const nonce = randomUUID();
             const signedAt = Date.now();
-            const signDataStr = `${deviceKey.deviceId}:${nonce}:${signedAt}`;
-            const signature = signData(signDataStr, deviceKey.privateKey);
+            const OPERATOR_TOKEN = 'fSWST0KzO4UPwwCfvsiObkHXeKCyiY2GLWueN7s0psU';
+            const scopes = ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'].join(',');
+            // Build V2 signature payload: v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
+            const payload = `v2|${deviceKey.deviceId}|cli|cli|operator|${scopes}|${signedAt}|${OPERATOR_TOKEN}|${challengePayload.nonce}`;
+            const signature = signData(payload, deviceKey.privateKey);
 
             const connectParams: ConnectParams = {
               minProtocol: 3,
@@ -113,16 +117,12 @@ export class RelayWebSocketServer {
                 publicKey: deviceKey.publicKey,
                 signature: signature,
                 signedAt: signedAt,
-                nonce: nonce,
+                nonce: challengePayload.nonce,
+              },
+              auth: {
+                token: OPERATOR_TOKEN,
               },
             };
-
-            // Include device token if we have one (after pairing)
-            if (this.config.pairing.deviceToken) {
-              connectParams.auth = {
-                deviceToken: this.config.pairing.deviceToken,
-              };
-            }
 
             ws.send(JSON.stringify({
               type: 'req',

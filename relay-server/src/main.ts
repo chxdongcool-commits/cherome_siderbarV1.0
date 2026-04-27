@@ -30,19 +30,44 @@ async function main() {
     console.log('╚════════════════════════════════════════════════════════════╝');
     console.log('\n');
 
-    try {
-      const result = await performPairingWebSocket(
-        config.gateway.host,
-        config.gateway.port,
-        (status) => {
-          logger.info({ status }, 'Pairing status update');
+    // Retry loop for pairing
+    while (true) {
+      try {
+        const result = await performPairingWebSocket(
+          config.gateway.host,
+          config.gateway.port,
+          (status) => {
+            logger.info({ status }, 'Pairing status update');
+          }
+        );
+
+        if (result.pendingApproval) {
+          // Pairing request submitted, waiting for admin approval
+          console.log('\n');
+          console.log('╔════════════════════════════════════════════════════════════╗');
+          console.log('║  PAIRING REQUEST SUBMITTED - AWAITING APPROVAL            ║');
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log('║  Please approve the pairing request on the Gateway:       ║');
+          console.log('║    openclaw nodes list                                    ║');
+          console.log('║    openclaw nodes approve ' + (result.pairingToken || '<requestId>').padEnd(28) + '║');
+          console.log('║                                                        ║');
+          console.log('║  The relay will retry automatically after approval...     ║');
+          console.log('╚════════════════════════════════════════════════════════════╝');
+          console.log('\n');
+
+          // Wait a bit before retrying
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
         }
-      );
-      logger.info({ deviceId: result.deviceId }, 'Pairing successful!');
-      config.pairing.deviceToken = result.deviceToken;
-    } catch (err) {
-      logger.error({ err }, 'Pairing failed');
-      process.exit(1);
+
+        // Success - we got a token
+        logger.info({ deviceId: result.deviceId }, 'Pairing successful!');
+        config.pairing.deviceToken = result.deviceToken;
+        break;
+      } catch (err) {
+        logger.error({ err }, 'Pairing failed');
+        process.exit(1);
+      }
     }
   } else {
     if (envToken) {

@@ -9,7 +9,7 @@
  *   Side Panel <---> Service Worker <---> Relay Server <---> Gateway
  */
 
-const RELAY_URL = 'wss://47.89.181.91:18790';
+const RELAY_URL = 'ws://47.89.181.91:18791';
 const RECONNECT_DELAY_BASE = 1000;
 const RECONNECT_DELAY_MAX = 30000;
 
@@ -42,6 +42,16 @@ const pendingRequests = new Map<string, { resolve: (value: unknown) => void; rej
 // Port to side panel for event forwarding
 let sidePanelPort: chrome.runtime.Port | null = null;
 
+// Queue events when side panel is not connected
+const eventQueue: { event: string; payload: unknown }[] = [];
+
+function flushEventQueue() {
+  while (eventQueue.length > 0 && sidePanelPort) {
+    const { event, payload } = eventQueue.shift()!;
+    sidePanelPort.postMessage({ type: 'event', event, payload });
+  }
+}
+
 // ============================================================================
 // Service Worker Lifecycle
 // ============================================================================
@@ -58,6 +68,8 @@ chrome.runtime.onConnect.addListener((port) => {
     });
     // Send current connection state to newly connected panel
     port.postMessage({ type: 'connection-state', state: connectionState });
+    // Flush any queued events
+    flushEventQueue();
   }
 });
 
@@ -124,6 +136,8 @@ function disconnect() {
 function broadcastConnectionState() {
   if (sidePanelPort) {
     sidePanelPort.postMessage({ type: 'connection-state', state: connectionState });
+    // Try to flush queued events when state changes
+    flushEventQueue();
   }
 }
 
@@ -159,34 +173,10 @@ type EventFrame = Frame & { event: string; payload: unknown };
 type ResFrame = Frame & { id: string; ok: boolean; payload?: unknown };
 
 function handleEvent(frame: EventFrame) {
-  // Forward all events to side panel
   if (sidePanelPort) {
     sidePanelPort.postMessage({ type: 'event', event: frame.event, payload: frame.payload });
-  }
-
-  switch (frame.event) {
-    case 'hello-ok':
-      logger.info('Gateway handshake complete');
-      break;
-    case 'tick':
-      // Liveness signal, no UI update needed
-      break;
-    case 'session.message.delta':
-      // Streaming delta - handled by side panel
-      break;
-    case 'session.message.start':
-      // Message start
-      break;
-    case 'session.message.end':
-      // Message end
-      break;
-    case 'typing.start':
-    case 'typing.end':
-      // Typing indicator events
-      break;
-    case 'sessions.changed':
-      // Session list changed
-      break;
+  } else {
+    eventQueue.push({ event: frame.event, payload: frame.payload });
   }
 }
 
@@ -264,7 +254,17 @@ chrome.runtime.onMessage.addListener((message, _port, sendResponse) => {
       }
 
       pendingRequests.set(id, {
-        resolve: (payload) => sendResponse({ sessions: (payload as { sessions?: unknown[] })?.sessions || [] }),
+        resolve: (payload) => {
+          // Map Gateway session format to our StoredSession format
+          const gwSessions = ((payload as { sessions?: unknown[] })?.sessions || []) as { key?: string; displayName?: string; updatedAt?: number; createdAt?: number }[];
+          const mappedSessions = gwSessions.map((s) => ({
+            id: s.key || crypto.randomUUID(),
+            title: s.displayName || 'Untitled',
+            createdAt: s.createdAt || Date.now(),
+            updatedAt: s.updatedAt || Date.now(),
+          }));
+          sendResponse({ sessions: mappedSessions });
+        },
         reject: () => sendResponse({ sessions: [] }),
       });
 
@@ -281,6 +281,19 @@ chrome.runtime.onMessage.addListener((message, _port, sendResponse) => {
     case 'set-active-session':
       activeSessionId = message.sessionId;
       logger.info('Active session set', activeSessionId);
+
+      // Subscribe to the session to receive events
+      if (activeSessionId && ws && ws.readyState === WebSocket.OPEN) {
+        const subId = crypto.randomUUID();
+        ws.send(JSON.stringify({
+          type: 'req',
+          id: subId,
+          method: 'sessions.subscribe',
+          params: { sessionKey: activeSessionId },
+        }));
+        logger.info('Subscribed to session', activeSessionId);
+      }
+
       sendResponse({ ok: true });
       return true;
 

@@ -46,50 +46,109 @@ export function App() {
   }, [getCurrentMessages]);
 
   const handleGatewayEvent = useCallback((event: string, payload: unknown) => {
-    const p = payload as { sessionId?: string; messageId?: string; delta?: string };
+    const p = payload as { sessionKey?: string; runId?: string; seq?: number; state?: string; message?: unknown; errorMessage?: string; sessionId?: string };
     const state = useAppStore.getState();
 
     switch (event) {
       case 'session.message.start': {
-        const sessionId = state.activeSessionId;
-        if (!sessionId) break;
-        const msgId = p.messageId || crypto.randomUUID();
-        const msg: Message = {
-          id: msgId,
-          role: 'assistant',
-          parts: [{ type: 'text', text: '' }],
-          status: 'streaming',
-          createdAt: Date.now(),
-        };
-        addMessage(msg);
+        const sessionKey = p.sessionKey || state.activeSessionId;
+        if (!sessionKey) break;
+        setTyping(true);
         break;
       }
 
       case 'session.message.delta': {
-        const sessionId = state.activeSessionId;
-        if (!sessionId) break;
-        const sessionMessages = state.messagesBySession[sessionId] || [];
+        const sessionKey = p.sessionKey || state.activeSessionId;
+        if (!sessionKey) break;
+
+        const messageContent = p.message as { parts?: { type: string; text?: string }[]; content?: { type: string; text?: string }[] } | undefined;
+        let text = messageContent?.parts?.[0]?.text || '';
+        if (!text && messageContent?.content?.[0]?.text) {
+          text = messageContent.content[0].text;
+        }
+        if (!text) break;
+
+        const safeText = String(text);
+        const sessionMessages = state.messagesBySession[sessionKey] || [];
         const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
         if (lastMsg) {
-          appendToMessage(sessionId, lastMsg.id, p.delta || '');
+          appendToMessage(sessionKey, lastMsg.id, safeText);
+        } else {
+          const msgId = p.runId || crypto.randomUUID();
+          const msg: Message = {
+            id: msgId,
+            role: 'assistant',
+            parts: [{ type: 'text', text: safeText }],
+            status: 'streaming',
+            createdAt: Date.now(),
+          };
+          addMessage(msg);
         }
         break;
       }
 
       case 'session.message.end': {
-        const sessionId = state.activeSessionId;
-        if (!sessionId) break;
-        const sessionMessages = state.messagesBySession[sessionId] || [];
+        const sessionKey = p.sessionKey || state.activeSessionId;
+        if (!sessionKey) break;
+
+        const sessionMessages = state.messagesBySession[sessionKey] || [];
         const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
         if (lastMsg) {
-          updateMessage(sessionId, lastMsg.id, { status: 'complete' });
+          updateMessage(sessionKey, lastMsg.id, { status: 'complete' });
         }
         setTyping(false);
         break;
       }
 
+      case 'chat': {
+        const sessionKey = p.sessionKey || state.activeSessionId;
+        if (!sessionKey) break;
+
+        const chatState = p.state as 'delta' | 'final' | 'aborted' | 'error' | undefined;
+        const messageContent = p.message as { parts?: { type: string; text?: string }[]; content?: { type: string; text?: string }[] } | undefined;
+
+        if (chatState === 'delta') {
+          let text = messageContent?.parts?.[0]?.text || '';
+          if (!text && messageContent?.content?.[0]?.text) {
+            text = messageContent.content[0].text;
+          }
+          if (!text) break;
+
+          const safeText = String(text);
+          const sessionMessages = state.messagesBySession[sessionKey] || [];
+          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          if (lastMsg) {
+            appendToMessage(sessionKey, lastMsg.id, safeText);
+          } else {
+            const msgId = p.runId || crypto.randomUUID();
+            const msg: Message = {
+              id: msgId,
+              role: 'assistant',
+              parts: [{ type: 'text', text: safeText }],
+              status: 'streaming',
+              createdAt: Date.now(),
+            };
+            addMessage(msg);
+          }
+        } else if (chatState === 'final') {
+          const sessionMessages = state.messagesBySession[sessionKey] || [];
+          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          if (lastMsg) {
+            updateMessage(sessionKey, lastMsg.id, { status: 'complete' });
+          }
+          setTyping(false);
+        } else if (chatState === 'error' || chatState === 'aborted') {
+          const sessionMessages = state.messagesBySession[sessionKey] || [];
+          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          if (lastMsg) {
+            updateMessage(sessionKey, lastMsg.id, { status: 'error' });
+          }
+          setTyping(false);
+        }
+        break;
+      }
+
       case 'sessions.changed': {
-        // Reload sessions list
         chrome.runtime.sendMessage({ type: 'get-sessions' }, (response) => {
           if (response?.sessions) {
             setSessions(response.sessions);
@@ -107,8 +166,6 @@ export function App() {
         break;
 
       case 'hello-ok':
-        console.log('Gateway connected');
-        // Request sessions after connected
         chrome.runtime.sendMessage({ type: 'get-sessions' }, (response) => {
           if (response?.sessions) {
             setSessions(response.sessions);
@@ -153,6 +210,14 @@ export function App() {
     chrome.runtime.sendMessage({ type: 'get-connection-state' }, (response) => {
       if (response?.state) {
         setConnectionState(response.state as ConnectionState);
+        // If already connected, trigger sessions fetch as if we received hello-ok
+        if (response.state === 'connected') {
+          chrome.runtime.sendMessage({ type: 'get-sessions' }, (sessionsResponse) => {
+            if (sessionsResponse?.sessions) {
+              setSessions(sessionsResponse.sessions);
+            }
+          });
+        }
       }
     });
 
@@ -167,7 +232,8 @@ export function App() {
   }, [messages]);
 
   async function createNewSession() {
-    const sessionId = crypto.randomUUID();
+    // Use Gateway session key format: agent:main:<uuid>
+    const sessionId = `agent:main:${crypto.randomUUID()}`;
     const newSession = {
       id: sessionId,
       title: 'New Chat',
@@ -207,10 +273,11 @@ export function App() {
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'req',
-        method: 'sessions.send',
+        method: 'chat.send',
         params: {
-          sessionId,
-          parts: [{ type: 'text', text: text.trim() }],
+          sessionKey: sessionId,
+          message: text.trim(),
+          idempotencyKey: crypto.randomUUID(),
         },
       });
 

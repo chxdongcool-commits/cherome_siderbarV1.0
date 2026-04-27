@@ -121,8 +121,9 @@ export class MessageRelay {
    */
   routeGwEvent(frame: GatewayEvent): string[] {
     const eventName = frame.event;
-    const payload = frame.payload as { sessionId?: string } | undefined;
-    const sessionId = payload?.sessionId;
+    // chat events use sessionKey, others may use sessionId
+    const payload = frame.payload as { sessionId?: string; sessionKey?: string } | undefined;
+    const sessionId = payload?.sessionId || payload?.sessionKey;
 
     const targetedExts: string[] = [];
 
@@ -132,7 +133,10 @@ export class MessageRelay {
           targetedExts.push(extId);
         }
       }
-    } else if (eventName !== 'tick' && eventName !== 'heartbeat') {
+    }
+
+    // If no specific targets or no sessionId, broadcast to all (for hello-ok, etc)
+    if (targetedExts.length === 0 && eventName !== 'tick' && eventName !== 'heartbeat') {
       for (const [extId] of this.extSubscriptions) {
         targetedExts.push(extId);
       }
