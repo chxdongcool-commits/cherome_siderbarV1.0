@@ -284,14 +284,23 @@ chrome.runtime.onMessage.addListener((message, _port, sendResponse) => {
 
       // Subscribe to the session to receive events
       if (activeSessionId && ws && ws.readyState === WebSocket.OPEN) {
-        const subId = crypto.randomUUID();
+        const subId1 = crypto.randomUUID();
         ws.send(JSON.stringify({
           type: 'req',
-          id: subId,
+          id: subId1,
           method: 'sessions.subscribe',
-          params: { sessionKey: activeSessionId },
+          params: { sessionId: activeSessionId },
         }));
         logger.info('Subscribed to session', activeSessionId);
+
+        const subId2 = crypto.randomUUID();
+        ws.send(JSON.stringify({
+          type: 'req',
+          id: subId2,
+          method: 'sessions.messages.subscribe',
+          params: { sessionId: activeSessionId },
+        }));
+        logger.info('Subscribed to message stream', activeSessionId);
       }
 
       sendResponse({ ok: true });
