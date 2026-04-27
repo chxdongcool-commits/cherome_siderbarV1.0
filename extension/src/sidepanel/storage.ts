@@ -35,27 +35,29 @@ export async function initDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
-      const transaction = (event.target as IDBOpenDBRequest).transaction;
 
       // Sessions store
       if (!database.objectStoreNames.contains(STORES.SESSIONS)) {
         database.createObjectStore(STORES.SESSIONS, { keyPath: 'id' });
       }
 
-      // Messages store (keyed by id, with sessionId index)
+      // Messages store - create with sessionId index from the start
       if (!database.objectStoreNames.contains(STORES.MESSAGES)) {
-        const messagesStore = database.createObjectStore(STORES.MESSAGES, { keyPath: 'id' });
-        messagesStore.createIndex('sessionId', 'sessionId', { unique: false });
-      } else if (transaction) {
-        // Add index if it doesn't exist (for existing databases)
-        try {
+        database.createObjectStore(STORES.MESSAGES, { keyPath: 'id' });
+      }
+
+      // Always try to ensure sessionId index exists (works for both new and existing stores)
+      // Note: createIndex is idempotent - calling it multiple times is safe
+      try {
+        const transaction = (event.target as IDBOpenDBRequest).transaction;
+        if (transaction) {
           const messagesStore = transaction.objectStore(STORES.MESSAGES);
           if (!messagesStore.indexNames.contains('sessionId')) {
             messagesStore.createIndex('sessionId', 'sessionId', { unique: false });
           }
-        } catch (e) {
-          console.warn('[Storage] Could not add sessionId index:', e);
         }
+      } catch (e) {
+        // Index creation failed - will be retried on next open
       }
 
       // Auth store
