@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
-import { createHttpServer } from './server/http.js';
+import { createHttpServer, setWsServerRef } from './server/http.js';
 import { RelayWebSocketServer } from './server/websocket.js';
 import { performPairingWebSocket, loadSavedToken } from './server/pairing.js';
 
@@ -89,6 +89,7 @@ async function main() {
   // WebSocket server
   const wsServer = new RelayWebSocketServer(config);
   await wsServer.start();
+  setWsServerRef(wsServer);
 
   // graceful shutdown
   const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
@@ -105,4 +106,14 @@ async function main() {
 main().catch((err) => {
   logger.fatal({ err }, 'Fatal error');
   process.exit(1);
+});
+
+// Graceful error handlers
+process.on('uncaughtException', (err) => {
+  logger.error({ err }, 'Uncaught exception');
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, 'Unhandled rejection');
 });

@@ -278,16 +278,24 @@ export class RelayWebSocketServer {
 
   private startHeartbeat() {
     this.extHeartbeatTimer = setInterval(() => {
-      for (const [, conn] of this.extConnections) {
+      for (const [extId, conn] of this.extConnections) {
         if (conn.ws.readyState === WebSocket.OPEN) {
-          conn.ws.ping();
+          try {
+            conn.ws.ping();
+          } catch (err) {
+            logger.warn({ extId }, 'Failed to ping extension');
+          }
         }
       }
     }, this.config.heartbeat.extIntervalMs);
 
     this.gwHeartbeatTimer = setInterval(() => {
       if (this.gwConn.ws && this.gwConn.ws.readyState === WebSocket.OPEN) {
-        this.gwConn.ws.ping();
+        try {
+          this.gwConn.ws.ping();
+        } catch (err) {
+          logger.warn({ err }, 'Failed to ping gateway');
+        }
       }
     }, this.config.heartbeat.gwIntervalMs);
   }
@@ -298,5 +306,13 @@ export class RelayWebSocketServer {
     this.wss?.close();
     this.gwConn.ws?.terminate();
     logger.info('Relay WebSocket server stopped');
+  }
+
+  getExtCount(): number {
+    return this.extConnections.size;
+  }
+
+  isGatewayConnected(): boolean {
+    return this.gwConn.authenticated && this.gwConn.ws?.readyState === WebSocket.OPEN;
   }
 }
