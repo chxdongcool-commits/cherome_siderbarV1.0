@@ -62,23 +62,30 @@ export function App() {
         if (!sessionKey) break;
 
         const messageContent = p.message as { parts?: { type: string; text?: string }[]; content?: { type: string; text?: string }[] } | undefined;
-        let text = messageContent?.parts?.[0]?.text || '';
-        if (!text && messageContent?.content?.[0]?.text) {
-          text = messageContent.content[0].text;
-        }
+        const parts = messageContent?.parts || messageContent?.content || [];
+        const text = parts
+          .filter((p: any) => p.type === 'text')
+          .map((p: any) => p.text)
+          .join('') || '';
         if (!text) break;
 
-        const safeText = String(text);
         const sessionMessages = state.messagesBySession[sessionKey] || [];
-        const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+        let lastMsg: Message | undefined;
+        for (let i = sessionMessages.length - 1; i >= 0; i--) {
+          if (sessionMessages[i].status === 'streaming') {
+            lastMsg = sessionMessages[i];
+            break;
+          }
+        }
+
         if (lastMsg) {
-          appendToMessage(sessionKey, lastMsg.id, safeText);
+          updateMessage(sessionKey, lastMsg.id, { parts: [{ type: 'text', text }] });
         } else {
           const msgId = p.runId || crypto.randomUUID();
           const msg: Message = {
             id: msgId,
             role: 'assistant',
-            parts: [{ type: 'text', text: safeText }],
+            parts: [{ type: 'text', text }],
             status: 'streaming',
             createdAt: Date.now(),
           };
@@ -92,7 +99,13 @@ export function App() {
         if (!sessionKey) break;
 
         const sessionMessages = state.messagesBySession[sessionKey] || [];
-        const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+        let lastMsg: Message | undefined;
+        for (let i = sessionMessages.length - 1; i >= 0; i--) {
+          if (sessionMessages[i].status === 'streaming') {
+            lastMsg = sessionMessages[i];
+            break;
+          }
+        }
         if (lastMsg) {
           updateMessage(sessionKey, lastMsg.id, { status: 'complete' });
         }
@@ -108,38 +121,65 @@ export function App() {
         const messageContent = p.message as { parts?: { type: string; text?: string }[]; content?: { type: string; text?: string }[] } | undefined;
 
         if (chatState === 'delta') {
-          let text = messageContent?.parts?.[0]?.text || '';
-          if (!text && messageContent?.content?.[0]?.text) {
-            text = messageContent.content[0].text;
-          }
+          // Extract all text from content (snapshot mode - each delta has full text)
+          const parts = messageContent?.parts || messageContent?.content || [];
+          const text = parts
+            .filter((p: any) => p.type === 'text')
+            .map((p: any) => p.text)
+            .join('') || '';
           if (!text) break;
 
-          const safeText = String(text);
-          const sessionMessages = state.messagesBySession[sessionKey] || [];
-          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          const currentState = useAppStore.getState();
+          const sessionMessages = currentState.messagesBySession[sessionKey] || [];
+          // Find streaming message without mutating array
+          let lastMsg: Message | undefined;
+          for (let i = sessionMessages.length - 1; i >= 0; i--) {
+            if (sessionMessages[i].status === 'streaming') {
+              lastMsg = sessionMessages[i];
+              break;
+            }
+          }
+
           if (lastMsg) {
-            appendToMessage(sessionKey, lastMsg.id, safeText);
+            // Snapshot mode: REPLACE text instead of append
+            updateMessage(sessionKey, lastMsg.id, {
+              parts: [{ type: 'text', text }],
+            });
           } else {
             const msgId = p.runId || crypto.randomUUID();
             const msg: Message = {
               id: msgId,
               role: 'assistant',
-              parts: [{ type: 'text', text: safeText }],
+              parts: [{ type: 'text', text }],
               status: 'streaming',
               createdAt: Date.now(),
             };
             addMessage(msg);
           }
         } else if (chatState === 'final') {
-          const sessionMessages = state.messagesBySession[sessionKey] || [];
-          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          const currentState = useAppStore.getState();
+          const sessionMessages = currentState.messagesBySession[sessionKey] || [];
+          let lastMsg: Message | undefined;
+          for (let i = sessionMessages.length - 1; i >= 0; i--) {
+            if (sessionMessages[i].status === 'streaming') {
+              lastMsg = sessionMessages[i];
+              break;
+            }
+          }
           if (lastMsg) {
             updateMessage(sessionKey, lastMsg.id, { status: 'complete' });
           }
           setTyping(false);
         } else if (chatState === 'error' || chatState === 'aborted') {
-          const sessionMessages = state.messagesBySession[sessionKey] || [];
-          const lastMsg = [...sessionMessages].reverse().find((m) => m.status === 'streaming');
+          const currentState = useAppStore.getState();
+          const sessionMessages = currentState.messagesBySession[sessionKey] || [];
+          let lastMsg: Message | undefined;
+          for (let i = sessionMessages.length - 1; i >= 0; i--) {
+            if (sessionMessages[i].status === 'streaming') {
+              lastMsg = sessionMessages[i];
+              break;
+            }
+          }
           if (lastMsg) {
             updateMessage(sessionKey, lastMsg.id, { status: 'error' });
           }
